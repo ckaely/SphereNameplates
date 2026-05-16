@@ -1638,7 +1638,9 @@ function SP.UIPlumber:BuildSettings()
         if v == "classique" or v == "detail" or v == "shadowcircle" then
             self:SetCfg("borderOverlayScale", 1.6)
         elseif v == "wow_horde" or v == "wow_alliance" or v == "wow_evil"
-            or v == "wow_beast" or v == "wow_stone" or v == "wow_gold" then
+            or v == "wow_beast" or v == "wow_stone" or v == "wow_gold"
+            or v == "ns_horde" or v == "ns_alliance" or v == "ns_void"
+            or v == "ns_beast" or v == "ns_obsidian" or v == "ns_gold_ring" then
             self:SetCfg("borderOverlayScale", 1.72)
         end
     end
@@ -2159,6 +2161,12 @@ function SP.UIPlumber:BuildSettings()
                 {value="wow_beast",    label="Beast"},
                 {value="wow_stone",    label="Simple Stone"},
                 {value="wow_gold",     label="Simple Gold"},
+                {value="ns_horde",     label="Horde Fer"},
+                {value="ns_alliance",  label="Alliance Or"},
+                {value="ns_void",      label="Vide"},
+                {value="ns_beast",     label="Bete"},
+                {value="ns_obsidian",  label="Obsidienne"},
+                {value="ns_gold_ring", label="Anneau Or"},
             }, get("borderStyle", "solide"), setBorderStyle), 34, 32)
             local bStyle = get("borderStyle", "solide")()
             local bInfo = SP.GetBorderStyleInfo and SP:GetBorderStyleInfo(bStyle)
@@ -2616,6 +2624,7 @@ function SP.UIPlumber:BuildSettings()
 
         section("Icone du sort", "icon", function()
             add(CreateCheck(c, "Afficher l'icone", get("castbar_show_icon", true), set("castbar_show_icon")), 34, 28)
+            add(CreateCheck(c, "Mode focus (masquer HP/ilvl pendant le cast)", get("castbar_focus_mode", false), set("castbar_focus_mode")), 34, 28)
             add(CreateCycle(c, "Position", {
                 {value="top",         label="Haut"},
                 {value="center",      label="Centre"},

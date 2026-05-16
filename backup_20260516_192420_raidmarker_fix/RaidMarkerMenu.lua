@@ -14,7 +14,6 @@ local RMM = SP.RaidMarkerMenu
 local WHITE    = "Interface\\Buttons\\WHITE8x8"
 local GLOW_TEX = "Interface\\Cooldown\\ping4"
 local MASK_TEX = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
-local MARK_MACRO = SLASH_TARGET_MARKER1 or "/tm"
 
 local MARK_LABELS = {
     [1] = "Etoile",
@@ -101,62 +100,13 @@ end
 
 local function ApplyMarkerTexture(tex, mark)
     if not tex then return end
-    local path, uv, isAtlas
+    local path, uv
     if SP.GetRaidMarkerIcon then
-        path, uv, isAtlas = SP:GetRaidMarkerIcon(mark, DB().raidmark_pack)
+        path, uv = SP:GetRaidMarkerIcon(mark, DB().raidmark_pack)
     end
-    path = path or "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
+    path = path or ("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. tostring(mark))
     tex:SetTexture(path)
-    if isAtlas and SetRaidTargetIconTexture then
-        tex:SetTexCoord(0, 1, 0, 1)
-        pcall(SetRaidTargetIconTexture, tex, mark)
-    else
-        SafeSetTexCoord(tex, uv)
-    end
-end
-
-local function SafeRaidMark(token)
-    if not token or not GetRaidTargetIndex then return nil end
-    local ok, value = pcall(GetRaidTargetIndex, token)
-    if not ok or value == nil then return nil end
-    if canaccessvalue and not canaccessvalue(value) then return nil end
-    value = tonumber(value)
-    if value and value > 0 then return value end
-    return nil
-end
-
-local function SafeSameUnit(a, b)
-    if not a or not b or not UnitIsUnit then return false end
-    local ok, same = pcall(UnitIsUnit, a, b)
-    return ok and same == true
-end
-
-local function AddSetCandidate(candidates, seen, token)
-    if token and not seen[token] then
-        seen[token] = true
-        candidates[#candidates + 1] = token
-    end
-end
-
-local function BuildSetCandidates(data, unit)
-    local candidates, seen = {}, {}
-    if SafeSameUnit(unit, "target") then AddSetCandidate(candidates, seen, "target") end
-    if SafeSameUnit(unit, "mouseover") then AddSetCandidate(candidates, seen, "mouseover") end
-    if SafeSameUnit(unit, "focus") then AddSetCandidate(candidates, seen, "focus") end
-    AddSetCandidate(candidates, seen, unit)
-    AddSetCandidate(candidates, seen, data and data.displayedUnit)
-    AddSetCandidate(candidates, seen, data and data.unit)
-    return candidates
-end
-
-local function RefreshAfterSecureMark(data, unit)
-    if data and unit and SP.Orb and SP.Orb.UpdateRaidMark then
-        pcall(SP.Orb.UpdateRaidMark, SP.Orb, data, unit)
-    end
-    if SP.Orb and SP.Orb.RefreshAllRaidMarks then
-        SP.Orb:RefreshAllRaidMarks(0.05)
-        SP.Orb:RefreshAllRaidMarks(0.20)
-    end
+    SafeSetTexCoord(tex, uv)
 end
 
 function RMM:Ensure()
@@ -221,13 +171,9 @@ function RMM:GetButton(index)
     local f = self:Ensure()
     if f.buttons[index] then return f.buttons[index] end
 
-    local btn = CreateFrame("Button", nil, f, "SecureActionButtonTemplate")
+    local btn = CreateFrame("Button", nil, f)
     btn:SetFrameLevel(f:GetFrameLevel() + 2)
     btn:RegisterForClicks("LeftButtonUp")
-    if not InCombatLockdown or not InCombatLockdown() then
-        btn:SetAttribute("type", "macro")
-        btn:SetAttribute("macrotext", MARK_MACRO .. " " .. tostring(index))
-    end
     btn.bg = btn:CreateTexture(nil, "BACKGROUND")
     btn.bg:SetTexture(WHITE)
     btn.bg:SetAllPoints(btn)
@@ -288,8 +234,8 @@ function RMM:GetButton(index)
         end
         RMM:ShowLabel("")
     end)
-    btn:SetScript("PostClick", function(selfBtn)
-        RMM:AfterSecureMark(selfBtn._mark)
+    btn:SetScript("OnClick", function(selfBtn)
+        RMM:ApplyMark(selfBtn._mark)
     end)
 
     f.buttons[index] = btn
@@ -346,11 +292,6 @@ function RMM:LayoutButtons(progress)
         end
         ApplyMarkerTexture(btn.icon, i)
         btn._mark = i
-        local macroText = MARK_MACRO .. " " .. tostring(i)
-        if (not InCombatLockdown or not InCombatLockdown()) and btn:GetAttribute("macrotext") ~= macroText then
-            btn:SetAttribute("type", "macro")
-            btn:SetAttribute("macrotext", macroText)
-        end
         btn:Show()
     end
 end
@@ -488,17 +429,42 @@ function RMM:OnUpdate(elapsed)
     end
 end
 
-function RMM:AfterSecureMark(mark)
+function RMM:ApplyMark(mark)
     if not mark or not self.unit then return end
-    Log("Info", "secure /tm click mark=" .. tostring(mark) .. " unit=" .. tostring(self.unit))
-    RefreshAfterSecureMark(self.data, self.unit)
+    local ok, err = false, nil
+    if SetRaidTarget then
+        ok, err = pcall(SetRaidTarget, self.unit, mark)
+        if not ok then
+            local sameTarget = false
+            if UnitIsUnit then
+                local okSame, same = pcall(UnitIsUnit, self.unit, "target")
+                sameTarget = okSame and same == true
+            end
+            if sameTarget then
+                ok, err = pcall(SetRaidTarget, "target", mark)
+            end
+        end
+    else
+        err = "SetRaidTarget unavailable"
+    end
+    if not ok then
+        Log("Warn", "SetRaidTarget failed mark=" .. tostring(mark) .. " unit=" .. tostring(self.unit) .. " err=" .. tostring(err))
+    else
+        if self.data and self.unit and SP.Orb and SP.Orb.UpdateRaidMark then
+            pcall(SP.Orb.UpdateRaidMark, SP.Orb, self.data, self.unit)
+            if C_Timer and C_Timer.After then
+                local data, unit = self.data, self.unit
+                C_Timer.After(0.05, function()
+                    if data and unit and SP.Orb and SP.Orb.UpdateRaidMark then
+                        pcall(SP.Orb.UpdateRaidMark, SP.Orb, data, unit)
+                    end
+                end)
+            end
+        end
+    end
     if Opt("raidmark_menu_close_after_action", true) ~= false then
         self:Hide()
     end
-end
-
-function RMM:ApplyMark(mark)
-    self:AfterSecureMark(mark)
 end
 
 function RMM:Attach(data, unit)

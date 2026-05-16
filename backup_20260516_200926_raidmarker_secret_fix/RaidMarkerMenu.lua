@@ -14,7 +14,6 @@ local RMM = SP.RaidMarkerMenu
 local WHITE    = "Interface\\Buttons\\WHITE8x8"
 local GLOW_TEX = "Interface\\Cooldown\\ping4"
 local MASK_TEX = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
-local MARK_MACRO = SLASH_TARGET_MARKER1 or "/tm"
 
 local MARK_LABELS = {
     [1] = "Etoile",
@@ -118,9 +117,7 @@ end
 local function SafeRaidMark(token)
     if not token or not GetRaidTargetIndex then return nil end
     local ok, value = pcall(GetRaidTargetIndex, token)
-    if not ok or value == nil then return nil end
-    if canaccessvalue and not canaccessvalue(value) then return nil end
-    value = tonumber(value)
+    value = ok and tonumber(value) or nil
     if value and value > 0 then return value end
     return nil
 end
@@ -149,14 +146,25 @@ local function BuildSetCandidates(data, unit)
     return candidates
 end
 
-local function RefreshAfterSecureMark(data, unit)
-    if data and unit and SP.Orb and SP.Orb.UpdateRaidMark then
-        pcall(SP.Orb.UpdateRaidMark, SP.Orb, data, unit)
+local function TrySetRaidTargetVerified(data, unit, mark)
+    if not SetRaidTarget then return false, "SetRaidTarget unavailable" end
+
+    local candidates = BuildSetCandidates(data, unit)
+    local details = {}
+    for i = 1, #candidates do
+        local token = candidates[i]
+        local ok, err = pcall(SetRaidTarget, token, mark)
+        local verified = SafeRaidMark(token)
+        details[#details + 1] = tostring(token) .. ":call=" .. tostring(ok) .. ":mark=" .. tostring(verified or "nil")
+        if ok and verified == tonumber(mark) then
+            return true, token, table.concat(details, " | ")
+        end
+        if not ok and err then
+            details[#details] = details[#details] .. ":err=" .. tostring(err)
+        end
     end
-    if SP.Orb and SP.Orb.RefreshAllRaidMarks then
-        SP.Orb:RefreshAllRaidMarks(0.05)
-        SP.Orb:RefreshAllRaidMarks(0.20)
-    end
+
+    return false, table.concat(details, " | ")
 end
 
 function RMM:Ensure()
@@ -221,13 +229,9 @@ function RMM:GetButton(index)
     local f = self:Ensure()
     if f.buttons[index] then return f.buttons[index] end
 
-    local btn = CreateFrame("Button", nil, f, "SecureActionButtonTemplate")
+    local btn = CreateFrame("Button", nil, f)
     btn:SetFrameLevel(f:GetFrameLevel() + 2)
     btn:RegisterForClicks("LeftButtonUp")
-    if not InCombatLockdown or not InCombatLockdown() then
-        btn:SetAttribute("type", "macro")
-        btn:SetAttribute("macrotext", MARK_MACRO .. " " .. tostring(index))
-    end
     btn.bg = btn:CreateTexture(nil, "BACKGROUND")
     btn.bg:SetTexture(WHITE)
     btn.bg:SetAllPoints(btn)
@@ -288,8 +292,8 @@ function RMM:GetButton(index)
         end
         RMM:ShowLabel("")
     end)
-    btn:SetScript("PostClick", function(selfBtn)
-        RMM:AfterSecureMark(selfBtn._mark)
+    btn:SetScript("OnClick", function(selfBtn)
+        RMM:ApplyMark(selfBtn._mark)
     end)
 
     f.buttons[index] = btn
@@ -346,11 +350,6 @@ function RMM:LayoutButtons(progress)
         end
         ApplyMarkerTexture(btn.icon, i)
         btn._mark = i
-        local macroText = MARK_MACRO .. " " .. tostring(i)
-        if (not InCombatLockdown or not InCombatLockdown()) and btn:GetAttribute("macrotext") ~= macroText then
-            btn:SetAttribute("type", "macro")
-            btn:SetAttribute("macrotext", macroText)
-        end
         btn:Show()
     end
 end
@@ -488,17 +487,31 @@ function RMM:OnUpdate(elapsed)
     end
 end
 
-function RMM:AfterSecureMark(mark)
+function RMM:ApplyMark(mark)
     if not mark or not self.unit then return end
-    Log("Info", "secure /tm click mark=" .. tostring(mark) .. " unit=" .. tostring(self.unit))
-    RefreshAfterSecureMark(self.data, self.unit)
+    local ok, tokenOrErr, details = TrySetRaidTargetVerified(self.data, self.unit, mark)
+    if not ok then
+        Log("Warn", "SetRaidTarget not verified mark=" .. tostring(mark) .. " unit=" .. tostring(self.unit) .. " details=" .. tostring(tokenOrErr))
+    else
+        Log("Info", "SetRaidTarget verified mark=" .. tostring(mark) .. " token=" .. tostring(tokenOrErr) .. " details=" .. tostring(details))
+        if self.data and self.unit and SP.Orb and SP.Orb.UpdateRaidMark then
+            pcall(SP.Orb.UpdateRaidMark, SP.Orb, self.data, self.unit)
+            if C_Timer and C_Timer.After then
+                local data, unit = self.data, self.unit
+                C_Timer.After(0.05, function()
+                    if data and unit and SP.Orb and SP.Orb.UpdateRaidMark then
+                        pcall(SP.Orb.UpdateRaidMark, SP.Orb, data, unit)
+                    end
+                end)
+            end
+        end
+        if SP.Orb and SP.Orb.RefreshAllRaidMarks then
+            SP.Orb:RefreshAllRaidMarks(0.10)
+        end
+    end
     if Opt("raidmark_menu_close_after_action", true) ~= false then
         self:Hide()
     end
-end
-
-function RMM:ApplyMark(mark)
-    self:AfterSecureMark(mark)
 end
 
 function RMM:Attach(data, unit)

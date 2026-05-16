@@ -50,7 +50,6 @@ local EVENTS = {
     "PLAYER_REGEN_DISABLED",
     "PLAYER_REGEN_ENABLED",
     -- Unité
-    "UNIT_NAME_UPDATE",          -- données de classe disponibles (joueurs allié/ennemi)
     "UNIT_CLASSIFICATION_CHANGED",
     "UNIT_FACTION",
     "UNIT_LEVEL",
@@ -214,10 +213,7 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                     local hasMark = false
                     if data.unit then
                         local ok, idx = pcall(GetRaidTargetIndex, data.unit)
-                        if ok and idx ~= nil and (not canaccessvalue or canaccessvalue(idx)) then
-                            idx = tonumber(idx)
-                            hasMark = idx and idx > 0
-                        end
+                        hasMark = ok and idx and idx > 0
                     end
                     local isBoss = false
                     if data.unit then
@@ -301,9 +297,6 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "NAME_PLATE_UNIT_ADDED" then
         SP:Debug("EVENT NAME_PLATE_UNIT_ADDED → " .. tostring(arg1))
         SP:OnPlateAdded(arg1)
-        if SP.Orb and SP.Orb.RefreshAllRaidMarks then
-            SP.Orb:RefreshAllRaidMarks(0.05)
-        end
 
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         SP:Debug("EVENT NAME_PLATE_UNIT_REMOVED → " .. tostring(arg1))
@@ -384,16 +377,6 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
             pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, SP:GetCfg(data.unitType))
         end
 
-    elseif event == "UNIT_NAME_UPDATE" then
-        -- Données de classe arrivées côté client → résoudre la couleur si encore en attente
-        local data = arg1 and SP.Plates[arg1]
-        if data and not data._cachedClass then
-            local isPlayer = (data.unitType == "ENEMY_PLAYER" or data.unitType == "FRIENDLY_PLAYER")
-            if isPlayer and data.unit then
-                pcall(SP.Orb.RefreshUnitColors, SP.Orb, data, data.unit, data._displayRatio or 1)
-            end
-        end
-
     elseif event == "UNIT_CLASSIFICATION_CHANGED" then
         local data = SP.Plates[arg1]
         if data then SP.Orb:UpdateElite(data, arg1) end
@@ -415,9 +398,8 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     -- (pas de dispatch global ici pour éviter le double traitement)
 
     elseif event == "RAID_TARGET_UPDATE" then
-        if SP.Orb and SP.Orb.RefreshAllRaidMarks then
-            SP.Orb:RefreshAllRaidMarks()
-            SP.Orb:RefreshAllRaidMarks(0.05)
+        for unit, data in pairs(SP.Plates) do
+            SP.Orb:UpdateRaidMark(data, unit)
         end
 
     elseif event == "QUEST_ACCEPTED" or event == "UNIT_QUEST_LOG_CHANGED" then
@@ -1730,14 +1712,6 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
     elseif cmd == "raidmark" then
         SP:Print("=== RAID MARKERS ===")
         local db = SP.db or {}
-        local function markerText(token)
-            if not token or not GetRaidTargetIndex then return "nil" end
-            local ok, value = pcall(GetRaidTargetIndex, token)
-            if not ok then return "err" end
-            if value == nil then return "nil" end
-            if canaccessvalue and not canaccessvalue(value) then return "secret" end
-            return tostring(tonumber(value) or value)
-        end
         SP:Print("enabled=" .. tostring(db.raidmark_global_enabled ~= false)
             .. " custom=" .. tostring(db.raidmark_custom_enabled ~= false)
             .. " pack=" .. tostring(db.raidmark_pack or "sign_mark")
@@ -1745,16 +1719,14 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
         local count = 0
         for unit, data in pairs(SP.Plates or {}) do
             count = count + 1
-            local okExists, exists = pcall(UnitExists, unit)
-            local okName, uname = pcall(UnitName, unit)
-            local okGUID, guid = pcall(UnitGUID, unit)
-            local mark = markerText(unit)
+            local okMark, mark = pcall(GetRaidTargetIndex, unit)
             local alias = ""
             if UnitIsUnit then
                 for _, token in ipairs({"target", "mouseover", "focus"}) do
                     local okSame, same = pcall(UnitIsUnit, unit, token)
                     if okSame and same then
-                        alias = alias .. " " .. token .. "=" .. markerText(token)
+                        local okA, mA = pcall(GetRaidTargetIndex, token)
+                        alias = alias .. " " .. token .. "=" .. tostring(okA and mA or "err")
                     end
                 end
             end
@@ -1762,16 +1734,11 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
             local shown = data and data.raidIconFrame and data.raidIconFrame:IsShown()
             SP:Print(tostring(unit)
                 .. " type=" .. tostring(data and data.unitType or "?")
-                .. " exists=" .. tostring(okExists and exists or "err")
-                .. " name=" .. tostring(okName and uname or "?")
-                .. " guid=" .. tostring(okGUID and guid or "?")
-                .. " mark=" .. tostring(mark)
+                .. " mark=" .. tostring(okMark and mark or "err")
                 .. alias
                 .. " shown=" .. tostring(shown)
                 .. " reason=" .. tostring(dbg.reason)
                 .. " source=" .. tostring(dbg.source)
-                .. " token=" .. tostring(dbg.token)
-                .. " tex=" .. tostring(dbg.tex)
                 .. " resolved=" .. tostring(dbg.mark))
             if count >= 8 then
                 SP:Print("(limite a 8 unites)")

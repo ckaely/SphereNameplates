@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 -- SphereNameplates v7.4 — Config.lua
 -- Namespace global, couleurs, utilitaires, defaults AceDB
 --
@@ -57,13 +57,6 @@ SP.BORDER_STYLES = {
     wow_beast    = { name="Beast",        path=SP.MEDIA.."wow_style.png", blend="BLEND", tint=false, uv={0,       0.3333, 0.5, 1  } },
     wow_stone    = { name="Simple Stone", path=SP.MEDIA.."wow_style.png", blend="BLEND", tint=false, uv={0.3333,  0.6667, 0.5, 1  } },
     wow_gold     = { name="Simple Gold",  path=SP.MEDIA.."wow_style.png", blend="BLEND", tint=false, uv={0.6667,  1,      0.5, 1  } },
-    -- Spritesheet cadre_sphere_new_style.png : grille 3x2, chaque cellule 1/3 x 1/2, fond alpha=0
-    ns_horde     = { name="Horde Fer",    path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0,       0.3333, 0,   0.5} },
-    ns_alliance  = { name="Alliance Or",  path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0.3333,  0.6667, 0,   0.5} },
-    ns_void      = { name="Vide",         path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0.6667,  1,      0,   0.5} },
-    ns_beast     = { name="Bete",         path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0,       0.3333, 0.5, 1  } },
-    ns_obsidian  = { name="Obsidienne",   path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0.3333,  0.6667, 0.5, 1  } },
-    ns_gold_ring = { name="Anneau Or",    path=SP.MEDIA.."cadre_sphere_new_style.png", blend="BLEND", tint=false, uv={0.6667,  1,      0.5, 1  } },
     detail    = { name="Détail",    path=SP.ASSETS .. "orb-border-2" },
 }
 
@@ -127,7 +120,7 @@ function SP:GetRaidMarkerIcon(markIndex, packId)
 
     local pack = self:GetRaidMarkerPack(packId)
     if not pack or pack.blizzard then
-        return "Interface\\TargetingFrame\\UI-RaidTargetingIcons", nil, true
+        return "Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. markIndex, nil
     end
 
     local cols = pack.cols or 8
@@ -1335,7 +1328,6 @@ local function U(o)
         castbar_icon_offset_x  = 0,          -- décalage X de l'icône (px)
         castbar_icon_offset_y  = 0,          -- décalage Y de l'icône (px)
         castbar_show_icon      = true,       -- afficher l'icône du sort
-        castbar_focus_mode     = false,      -- masquer HP/ilvl/castTime pendant le cast, réafficher après
         castbar_text_position  = "bottom",   -- "center"|"top"|"bottom"|"left"|"right"
         castbar_text_offset_x  = 0,
         castbar_text_offset_y  = 0,

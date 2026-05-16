@@ -1380,6 +1380,14 @@ function SP.CastBar:_ApplyCast(data, name, startMS, endMS, notInt, isChannel, ic
         cb.castTime:Show()
     end
     cb.flashTex:SetAlpha(0)
+
+    -- ── Mode focus : masquer HP/ilvl/castTime pendant le cast ─────────────────
+    if cfg.castbar_focus_mode then
+        if data.levelText then data.levelText:Hide() end
+        if data.hpSubText then data.hpSubText:Hide() end
+        if cb.castTime    then cb.castTime:Hide()    end
+        cb._focusModeActive = true
+    end
 end
 
 function SP.CastBar:_RefreshCastTiming(data, startMS, endMS, notInt, isChannel)
@@ -1823,7 +1831,8 @@ function SP.CastBar:Create(data)
         local icoSz = math_max(14, math_floor(SIZE * (cfg.castbar_icon_size or 0.42)))
         iconFrame = CreateFrame("Frame", nil, root)
         iconFrame:SetSize(icoSz, icoSz)
-        iconFrame:SetFrameLevel(rootFL + 6)
+        -- rootFL+3 = sous overlayOrbFrame (root+4) qui contient gloss/glassTex/glossTex
+        iconFrame:SetFrameLevel(rootFL + 3)
         if data.orb then
             local pos = cfg.castbar_icon_position or "top"
             local iox = (cfg.castbar_icon_offset_x or 0)
@@ -2458,6 +2467,18 @@ function SP.CastBar:StopCast(data, interrupted)
     if cb.barFrame  then cb.barFrame:Hide()      end
     if cb.iconFrame then cb.iconFrame:SetAlpha(0) end
     if cb.barGlowL  then cb.barGlowL:SetAlpha(0) end
+
+    -- ── Mode focus : restaurer HP/ilvl/castTime après fin du cast ─────────────
+    if cb._focusModeActive then
+        cb._focusModeActive = false
+        -- levelText/hpSubText : SoftUpdate recalculera la visibilité correcte
+        -- On se contente de re-montrer si la config le demandait
+        local rcfg = SP:GetCfg(data.unitType) or {}
+        if rcfg.showLevelOrHP and data.levelText then data.levelText:Show() end
+        -- hpSubText : géré par SoftUpdate, pas besoin de forcer Show()
+        -- castTime : simplement masquer (cast terminé, durée n'a plus de sens)
+        if cb.castTime then cb.castTime:Hide() end
+    end
     -- Sprite mode
     local spr = data._cb_sprite
     if spr then spr.frame:Hide() end
@@ -3079,6 +3100,13 @@ function SP.CastBar:Reset(data)
     cb.channeling = false
     cb.flashStart = 0
     cb.glowPhase  = 0
+
+    -- Focus mode : restaurer levelText si on reset en urgence
+    if cb._focusModeActive then
+        cb._focusModeActive = false
+        local rcfg = SP:GetCfg(data.unitType) or {}
+        if rcfg.showLevelOrHP and data.levelText then data.levelText:Show() end
+    end
 
     if cb.cd        then cb.cd:SetCooldown(0, 0); cb.cd:Hide()    end
     if cb.headTex   then cb.headTex:SetAlpha(0)                    end

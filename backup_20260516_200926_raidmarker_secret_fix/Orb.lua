@@ -440,26 +440,18 @@ function SP.Orb:Create(unit, plate, unitType)
     mask:SetTexture(CIRCLE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     mask:SetAllPoints(orbFrame)
 
-    -- Fond — frame DÉDIÉ à root+1 pour garantir le rendu DERRIÈRE tout le reste.
-    -- ⚠ NE PAS mettre bgTex sur orbFrame (root+2) : en WoW Midnight, SetDrawLayer()
-    -- dans SoftUpdate peut perturber l'ordre de rendu → fond opaque par-dessus le fill.
-    -- Solution structurelle : bgFrame à root+1, strictement sous orbFrame et hpBar.
-    local bgFrame = CreateFrame("Frame", nil, root)
-    bgFrame:SetSize(SIZE, SIZE)
-    bgFrame:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
-    bgFrame:SetFrameLevel(root:GetFrameLevel() + 1)
-
-    local bgTex = bgFrame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    -- Fond — couleur configurable (noir par défaut).
+    local bgTex = orbFrame:CreateTexture(nil, "BACKGROUND", nil, -8)
     bgTex:SetTexture(WHITE)
-    bgTex:SetAllPoints(bgFrame)
+    bgTex:SetAllPoints(orbFrame)
     bgTex:SetVertexColor(cfg.bgR or 0, cfg.bgG or 0, cfg.bgB or 0)
     bgTex:SetAlpha(cfg.bgAlpha or 1.0)
-    bgTex:AddMaskTexture(mask)   -- mask sur orbFrame — cross-frame masks supportés
+    bgTex:AddMaskTexture(mask)
 
     -- bgTex2 : léger relief dans le vide (presque invisible, sert uniquement à "creuser")
-    local bgTex2 = bgFrame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    local bgTex2 = orbFrame:CreateTexture(nil, "BACKGROUND", nil, -7)
     bgTex2:SetTexture(M("orb-backdrop2"))
-    bgTex2:SetAllPoints(bgFrame)
+    bgTex2:SetAllPoints(orbFrame)
     bgTex2:SetBlendMode("ADD")
     bgTex2:SetVertexColor(0.04, 0.04, 0.07)
     bgTex2:SetAlpha(0.04)   -- quasi invisible
@@ -467,7 +459,7 @@ function SP.Orb:Create(unit, plate, unitType)
 
     -- FILL HP — StatusBar vertical (taint-safe, WoW Midnight 12.x)
     -- Parente : root (pas orbFrame) afin de maîtriser le frame level.
-    -- Hiérarchie : bgFrame(L+1) < orbFrame(L+2) < hpBar(fill,L+3) < overlayOrbFrame(galaxy,L+4)
+    -- Hiérarchie : orbFrame(bgTex,L+2) < hpBar(fill,L+3) < overlayOrbFrame(galaxy,L+4)
     -- SetMinMaxValues/SetValue acceptent les valeurs "secret number tainted".
     local hpBar = CreateFrame("StatusBar", nil, root)
     hpBar:SetSize(SIZE, SIZE)
@@ -885,7 +877,6 @@ function SP.Orb:Create(unit, plate, unitType)
     local data = {
         root         = root,
         orb          = orbFrame,
-        bgFrame      = bgFrame,    -- frame dédié root+1 — strictement derrière orbFrame
         orbFrame     = orbFrame,
         mask         = mask,
         fillTex      = fillTex,
@@ -1202,11 +1193,13 @@ function SP.Orb:SoftUpdate(data, unit)
 
     -- Fond : couleur configurable (noir par défaut)
     if data.bgTex then
-        -- bgTex est sur bgFrame (root+1) → draw order garanti, SetDrawLayer inutile
+        pcall(data.bgTex.SetDrawLayer, data.bgTex, "BACKGROUND", -8)
         data.bgTex:SetVertexColor(cfg.bgR or 0, cfg.bgG or 0, cfg.bgB or 0)
         data.bgTex:SetAlpha(cfg.bgAlpha or 1.0)
     end
-    -- bgTex2 est sur bgFrame (root+1) — draw order garanti, SetDrawLayer inutile
+    if data.bgTex2 then
+        pcall(data.bgTex2.SetDrawLayer, data.bgTex2, "BACKGROUND", -7)
+    end
 
     -- Shimmer/Galaxy/Glow : re-teinter selon fill color de l'unité.
     if data.shimmer2 then
@@ -1799,17 +1792,8 @@ local BLIZZARD_RAID_MARKER_ATLAS = "Interface\\TargetingFrame\\UI-RaidTargetingI
 local function SafeRaidMark(token)
     if not token or not GetRaidTargetIndex then return nil end
     local ok, mark = pcall(GetRaidTargetIndex, token)
-    if not ok or mark == nil then return nil end
-    if canaccessvalue and not canaccessvalue(mark) then return nil end
-    mark = tonumber(mark)
+    mark = ok and tonumber(mark) or nil
     if mark and mark > 0 then return mark end
-    return nil
-end
-
-local function RawRaidMark(token)
-    if not token or not GetRaidTargetIndex then return nil end
-    local ok, mark = pcall(GetRaidTargetIndex, token)
-    if ok and mark ~= nil then return mark end
     return nil
 end
 
@@ -1843,33 +1827,22 @@ local function ResolveRaidMarkerIndex(data, unit)
     if not GetRaidTargetIndex then return nil, "unavailable" end
 
     local tokens = BuildRaidMarkerReadTokens(data, unit)
-    local secretMark, secretSource
     for i = 1, #tokens do
         local token = tokens[i]
         local mark = SafeRaidMark(token)
         if mark then
             return mark, token, token
         end
-        if not secretMark then
-            local raw = RawRaidMark(token)
-            if raw ~= nil then
-                secretMark, secretSource = raw, token
-            end
-        end
-    end
-
-    if secretMark ~= nil then
-        return secretMark, secretSource or "secret", secretSource, true
     end
 
     return nil, "none"
 end
 
-local function ApplyRaidMarkerTexture(texture, mark, db, forceAtlas)
-    if not texture or mark == nil then return nil, nil, nil end
+local function ApplyRaidMarkerTexture(texture, mark, db)
+    if not texture or not mark then return nil, nil, nil end
 
     local tex, uv, isAtlas
-    if not forceAtlas and db.raidmark_custom_enabled ~= false and SP.GetRaidMarkerIcon then
+    if db.raidmark_custom_enabled ~= false and SP.GetRaidMarkerIcon then
         tex, uv, isAtlas = SP:GetRaidMarkerIcon(mark, db.raidmark_pack)
     end
     if not tex then
@@ -1919,8 +1892,8 @@ function SP.Orb:UpdateRaidMark(data, unit)
         return
     end
 
-    local mark, markSource, markToken, markSecret = ResolveRaidMarkerIndex(data, unit)
-    if mark ~= nil then
+    local mark, markSource, markToken = ResolveRaidMarkerIndex(data, unit)
+    if mark and mark > 0 and RAID_ICONS[mark] then
         local mode = db.raidmark_position_mode or "sphere"
         if mode == "name" and cfg.showName == false then
             data.raidIcon:SetAlpha(0)
@@ -1955,14 +1928,14 @@ function SP.Orb:UpdateRaidMark(data, unit)
         else
             data.raidIcon:SetPoint("CENTER", data.orbFrame or data.orb, "CENTER", offX, offY)
         end
-        local tex, uv, isAtlas = ApplyRaidMarkerTexture(data.raidIcon, mark, db, markSecret)
+        local tex, uv, isAtlas = ApplyRaidMarkerTexture(data.raidIcon, mark, db)
         data.raidIcon:SetAlpha(alpha)
         if data.raidIconFrame then
             data.raidIconFrame:SetFrameLevel((data.root and data.root:GetFrameLevel() or 1) + 30)
             data.raidIconFrame:SetAlpha(1)
             data.raidIconFrame:Show()
         end
-        data._raidMarkDebug = { reason = markSecret and "shown_secret_atlas" or "shown", unit = unit, mark = markSecret and "secret" or mark, source = markSource, token = markToken, tex = tex, atlas = isAtlas, mode = mode }
+        data._raidMarkDebug = { reason = "shown", unit = unit, mark = mark, source = markSource, token = markToken, tex = tex, atlas = isAtlas, mode = mode }
     else
         data.raidIcon:SetAlpha(0)
         if data.raidIconFrame then data.raidIconFrame:Hide() end
@@ -2124,8 +2097,7 @@ function SP.Orb:AnimTick(dt)
             -- Pour les joueurs alliés à 100% HP (pas de UNIT_HEALTH), UpdateFill
             -- n'est jamais rappelé après l'échec initial → _cachedClass reste nil.
             -- On retente SafeUnitClass toutes les 2s jusqu'à succès, puis
-            -- on force RefreshUnitColors (pas seulement UpdateFill) pour que
-            -- shimmer2, waveT1, waveT2 soient aussi mis à jour (évite l'aspect délavé).
+            -- on force un UpdateFill pour appliquer la couleur de classe.
             local isPlayerType = (data.unitType == "ENEMY_PLAYER" or data.unitType == "FRIENDLY_PLAYER")
             if not data._cachedClass and isPlayerType and data.unit then
                 data._classRetryAcc = (data._classRetryAcc or 0) + dt
@@ -2134,8 +2106,8 @@ function SP.Orb:AnimTick(dt)
                     local cls = SafeUnitClass(data.unit, true)
                     if cls then
                         data._cachedClass = cls
-                        pcall(SP.Orb.RefreshUnitColors, SP.Orb, data,
-                              data.unit, data._displayRatio or data.displayHP or 1)
+                        pcall(SP.Orb.UpdateFill, SP.Orb, data,
+                              data._displayRatio or data.displayHP or 1)
                     end
                 end
             end

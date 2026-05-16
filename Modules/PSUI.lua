@@ -2764,9 +2764,18 @@ function SP.UIPlumber:BuildSettings()
         section("Cible", "targetMain", function()
             add(CreateCheck(c, "Personnalisation cible", get("target_custom_enabled", false), set("target_custom_enabled")), 34, 28)
             add(CreateCheck(c, "Glow cible", get("target_glow_enabled", true), set("target_glow_enabled")), 34, 28)
+            add(CreateCycle(c, "Effet cible", {
+                {value="pulse", label="Pulse"},
+                {value="ripple", label="Ondulation glow"},
+            }, get("target_glow_style", "pulse"), set("target_glow_style")), 34, 32)
             add(CreateColorButton(c, "Couleur cible", getColor("target_glowR", "target_glowG", "target_glowB", 1.0, 0.88, 0.0), setColor("target_glowR", "target_glowG", "target_glowB")), 34, 30)
             add(CreateSlider(c, "Alpha cible", 0, 1, 0.02, get("target_glow_alpha", 0.85), set("target_glow_alpha")), 34, 48)
             add(CreateCheck(c, "Pulse cible", get("target_glow_pulse", true), set("target_glow_pulse")), 34, 28)
+            if get("target_glow_style", "pulse") == "ripple" then
+                add(CreateSlider(c, "Vitesse ondulation", 0.20, 3.00, 0.05, get("target_ripple_speed", 1.15), set("target_ripple_speed")), 34, 48)
+                add(CreateSlider(c, "Taille ondulation", 1.05, 3.00, 0.05, get("target_ripple_size", 1.85), set("target_ripple_size")), 34, 48)
+                add(CreateSlider(c, "Trainee ondulation", 0.05, 1.00, 0.05, get("target_ripple_trail", 0.55), set("target_ripple_trail")), 34, 48)
+            end
         end, 1)
         section("Geometrie cible", "targetGeo", function()
             add(CreateCheck(c, "Scale hors-cible", get("non_target_scale_enabled", false), set("non_target_scale_enabled")), 34, 28)

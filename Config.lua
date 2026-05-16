@@ -1107,7 +1107,11 @@ local function U(o)
         target_glowG          = 0.88,
         target_glowB          = 0.00,
         target_glow_alpha     = 0.85,
+        target_glow_style     = "pulse", -- "pulse" | "ripple"
         target_glow_pulse     = true,
+        target_ripple_speed   = 1.15,
+        target_ripple_size    = 1.85,
+        target_ripple_trail   = 0.55,
         target_scale_enabled  = false,
         target_scale          = 1.0,
         target_priority       = "normal",

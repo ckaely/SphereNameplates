@@ -1831,8 +1831,9 @@ function SP.CastBar:Create(data)
         local icoSz = math_max(14, math_floor(SIZE * (cfg.castbar_icon_size or 0.42)))
         iconFrame = CreateFrame("Frame", nil, root)
         iconFrame:SetSize(icoSz, icoSz)
-        -- rootFL+3 = sous overlayOrbFrame (root+4) qui contient gloss/glassTex/glossTex
-        iconFrame:SetFrameLevel(rootFL + 3)
+        -- rootFL+5 = entre overlayOrbFrame/galaxy (root+4) et glassFrame/glass (root+6)
+        -- → icône SOUS le glass/gloss, AU-DESSUS des galaxy/shimmer ADD colorés
+        iconFrame:SetFrameLevel(rootFL + 5)
         if data.orb then
             local pos = cfg.castbar_icon_position or "top"
             local iox = (cfg.castbar_icon_offset_x or 0)
@@ -2468,16 +2469,11 @@ function SP.CastBar:StopCast(data, interrupted)
     if cb.iconFrame then cb.iconFrame:SetAlpha(0) end
     if cb.barGlowL  then cb.barGlowL:SetAlpha(0) end
 
-    -- ── Mode focus : restaurer HP/ilvl/castTime après fin du cast ─────────────
+    -- ── Mode focus : restaurer HP/ilvl immédiatement après fin du cast ──────────
     if cb._focusModeActive then
         cb._focusModeActive = false
-        -- levelText/hpSubText : SoftUpdate recalculera la visibilité correcte
-        -- On se contente de re-montrer si la config le demandait
-        local rcfg = SP:GetCfg(data.unitType) or {}
-        if rcfg.showLevelOrHP and data.levelText then data.levelText:Show() end
-        -- hpSubText : géré par SoftUpdate, pas besoin de forcer Show()
-        -- castTime : simplement masquer (cast terminé, durée n'a plus de sens)
-        if cb.castTime then cb.castTime:Hide() end
+        -- Forcer UpdateLevelText immédiatement : pas d'attente de prochain event HP
+        pcall(SP.Orb.UpdateLevelText, SP.Orb, data, data.unit)
     end
     -- Sprite mode
     local spr = data._cb_sprite
@@ -3101,11 +3097,10 @@ function SP.CastBar:Reset(data)
     cb.flashStart = 0
     cb.glowPhase  = 0
 
-    -- Focus mode : restaurer levelText si on reset en urgence
+    -- Focus mode : restaurer HP/ilvl si on reset en urgence
     if cb._focusModeActive then
         cb._focusModeActive = false
-        local rcfg = SP:GetCfg(data.unitType) or {}
-        if rcfg.showLevelOrHP and data.levelText then data.levelText:Show() end
+        pcall(SP.Orb.UpdateLevelText, SP.Orb, data, data.unit)
     end
 
     if cb.cd        then cb.cd:SetCooldown(0, 0); cb.cd:Hide()    end

@@ -92,6 +92,7 @@ function SP.Orb:Release(data)
     data._isFocus      = false
     data._inCombat     = false
     data._glowTime     = 0
+    data._targetRippleTime = 0
     data.isQuestUnit   = false
     data._ringAuraCount = 0
     -- Pack mode — état initial neutre (pleine visibilité, lerp immédiat)
@@ -108,6 +109,12 @@ function SP.Orb:Release(data)
     if data.ccText    then pcall(data.ccText.Hide,        data.ccText)       end
     -- Glow unique — éteindre
     if data.singleGlow then pcall(data.singleGlow.SetAlpha, data.singleGlow, 0) end
+    if data.targetRipples then
+        for _, ripple in ipairs(data.targetRipples) do
+            pcall(ripple.SetAlpha, ripple, 0)
+            pcall(ripple.Hide, ripple)
+        end
+    end
     if data.raidIcon then pcall(data.raidIcon.SetAlpha, data.raidIcon, 0) end
     if data.raidIconFrame then pcall(data.raidIconFrame.Hide, data.raidIconFrame) end
     if data.bossEliteFrame then pcall(data.bossEliteFrame.Hide, data.bossEliteFrame) end
@@ -467,7 +474,7 @@ function SP.Orb:Create(unit, plate, unitType)
 
     -- FILL HP — StatusBar vertical (taint-safe, WoW Midnight 12.x)
     -- Parente : root (pas orbFrame) afin de maîtriser le frame level.
-    -- Hiérarchie : bgFrame(L+1) < orbFrame(L+2) < hpBar(fill,L+3) < overlayOrbFrame(galaxy,L+4)
+    -- Hiérarchie : bgFrame(L+1) < orbFrame(L+2) < hpBar(fill,L+3) < overlayOrbFrame(galaxy,L+4) < [iconFrame castbar L+5] < glassFrame(L+6)
     -- SetMinMaxValues/SetValue acceptent les valeurs "secret number tainted".
     local hpBar = CreateFrame("StatusBar", nil, root)
     hpBar:SetSize(SIZE, SIZE)
@@ -595,19 +602,32 @@ function SP.Orb:Create(unit, plate, unitType)
 
     if cfg.orb_wave == false then waveT1:Hide() ; waveT2:Hide() end
 
+    -- ── glassFrame (root+6) — frame dédié pour glass/gloss/shadow/specular ──────
+    -- Séparation intentionnelle de overlayOrbFrame (root+4) :
+    --   root+4 (overlayOrbFrame) : effets dynamiques colorés (galaxy, shimmer, wave)
+    --   root+5 : icône castbar (CastBar.lua) — entre les deux
+    --   root+6 (glassFrame)     : effets statiques de verre (glass, gloss, shadow, specular)
+    -- Cela permet à l'icône du sort d'être SOUS le glass visuellement sans être
+    -- saturée par les couleurs ADD des galaxies/shimmer.
+    -- Cross-frame masks supportés dans WoW : mask sur orbFrame (root+2) fonctionne. ──
+    local glassFrame = CreateFrame("Frame", nil, root)
+    glassFrame:SetSize(SIZE, SIZE)
+    glassFrame:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    glassFrame:SetFrameLevel(root:GetFrameLevel() + 6)
+
     -- ── Glass overlay (alpha volontairement bas pour ne pas créer un disque ────
     -- dans la zone "vide" au-dessus du fill HP quand les PV baissent).
     -- À alpha élevé, ces textures ADD rendent tout le cercle lumineux même à vide.
     -- Slider orb_gloss_alpha dans le config pour ajuster.
     local gOA = cfg.orb_gloss_alpha or 0.20   -- réduit : 0.45 créait le "disque persistant"
-    local glassTex = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    local glassTex = glassFrame:CreateTexture(nil, "OVERLAY", nil, 1)
     glassTex:SetTexture(M("orb-glass"))
     glassTex:SetAllPoints(orbFrame)
     glassTex:SetBlendMode("ADD")
     glassTex:SetAlpha(gOA)
     glassTex:AddMaskTexture(mask)
 
-    local glassTex2 = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 2)
+    local glassTex2 = glassFrame:CreateTexture(nil, "OVERLAY", nil, 2)
     glassTex2:SetTexture(M("orb-glass-1"))
     glassTex2:SetAllPoints(orbFrame)
     glassTex2:SetBlendMode("ADD")
@@ -615,7 +635,7 @@ function SP.Orb:Create(unit, plate, unitType)
     glassTex2:AddMaskTexture(mask)
 
     -- ── Gloss rOrbs-style (orb_gloss.tga) ────────────────────────────────────
-    local glossTex = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 3)
+    local glossTex = glassFrame:CreateTexture(nil, "OVERLAY", nil, 3)
     glossTex:SetTexture(M("orb_gloss"))
     glossTex:SetAllPoints(orbFrame)
     glossTex:SetBlendMode("ADD")
@@ -628,7 +648,7 @@ function SP.Orb:Create(unit, plate, unitType)
     -- ── Inner shadow (configurable, défaut 0.35) ────────────────────────────
     -- Codex 2026-04-30: était hardcodé 0.62 → orbe trop sombre. Maintenant
     -- piloté par cfg.orb_shadow_alpha. Mettre à 0 pour désactiver.
-    local shadowTex = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 4)
+    local shadowTex = glassFrame:CreateTexture(nil, "OVERLAY", nil, 4)
     shadowTex:SetTexture(M("orb_innershadow"))
     shadowTex:SetAllPoints(orbFrame)
     shadowTex:SetAlpha(cfg.orb_shadow_alpha or 0.35)
@@ -639,7 +659,7 @@ function SP.Orb:Create(unit, plate, unitType)
     -- Crée seulement si orb_shadow2_enabled = true (sinon tex invalide invisible).
     local shadowTex2 = nil
     if cfg.orb_shadow2_enabled then
-        shadowTex2 = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 5)
+        shadowTex2 = glassFrame:CreateTexture(nil, "OVERLAY", nil, 5)
         shadowTex2:SetTexture(M("orb-innershadow-v2"))
         shadowTex2:SetAllPoints(orbFrame)
         shadowTex2:SetAlpha(cfg.orb_shadow2_alpha or 0.0)
@@ -649,7 +669,7 @@ function SP.Orb:Create(unit, plate, unitType)
     -- ── Specular highlight (haut-gauche) — point de lumière spéculaire ─────────
     -- Simule un reflet dur de lumière sur la sphère : rendu 3D naturel.
     -- orb_gloss positionné en quart supérieur-gauche, alpha modéré.
-    local specular = overlayOrbFrame:CreateTexture(nil, "OVERLAY", nil, 6)
+    local specular = glassFrame:CreateTexture(nil, "OVERLAY", nil, 6)
     specular:SetTexture(M("orb_gloss"))
     specular:SetSize(SIZE * 0.65, SIZE * 0.65)
     specular:SetPoint("TOPLEFT", orbFrame, "TOPLEFT", SIZE * 0.04, -SIZE * 0.04)
@@ -676,7 +696,7 @@ function SP.Orb:Create(unit, plate, unitType)
     -- donc l'orbe remplit exactement jusqu'à SIZE — plus de gap noir.
     -- La texture ring a son centre transparent aligné sur SIZE : ring visible au-delà.
     -- BLEND mode : transparence native de la texture respectée.
-    -- root+8 : au-dessus de tout l'orbe (root+4), sous les textes (root+9).
+    -- root+8 : au-dessus du glassFrame (root+6) et de l'iconFrame castbar (root+5), sous les textes (root+9).
     local br, bg, bb = GetBorderColor(cfg, unit)
     local bOScale = cfg.borderOverlayScale or 1.5
     local bOSize  = math.floor(SIZE * bOScale)
@@ -844,6 +864,17 @@ function SP.Orb:Create(unit, plate, unitType)
     singleGlow:SetBlendMode("ADD")
     singleGlow:SetAlpha(0)
 
+    local targetRipples = {}
+    for i = 1, 3 do
+        local ripple = root:CreateTexture(nil, "OVERLAY", nil, 4 + i)
+        ripple:SetTexture("Interface\\Cooldown\\ping4")
+        ripple:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+        ripple:SetBlendMode("ADD")
+        ripple:SetAlpha(0)
+        ripple:Hide()
+        targetRipples[i] = ripple
+    end
+
     -- ── 9. Icône Raid Mark ───────────────────────────────────────────────────
     local raidIconFrame = CreateFrame("Frame", nil, root)
     raidIconFrame:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
@@ -900,6 +931,7 @@ function SP.Orb:Create(unit, plate, unitType)
         waveT1       = waveT1,     -- vague DiabolicUI couche 1 (scroll horizontal)
         waveT2       = waveT2,     -- vague DiabolicUI couche 2 (phase opposée)
         overlayOrbFrame = overlayOrbFrame,
+        glassFrame   = glassFrame,    -- frame dédié root+6 : glass/gloss/shadow/specular
         glassTex     = glassTex,
         glassTex2    = glassTex2,
         glossTex     = glossTex,
@@ -918,6 +950,7 @@ function SP.Orb:Create(unit, plate, unitType)
         specular     = specular,
         fillSurface  = fillSurface,
         singleGlow   = singleGlow,   -- glow contextuel unique (aggro/cible/focus/lowHP)
+        targetRipples = targetRipples,
         raidIconFrame = raidIconFrame,
         raidIcon     = raidIcon,
         dragonL      = dragonL,
@@ -1003,6 +1036,7 @@ function SP.Orb:ApplySphereVisibility(data, cfg)
     setShown(data.orbFrame, visible)
     setShown(data.hpBar, visible)
     setShown(data.overlayOrbFrame, visible)
+    setShown(data.glassFrame, visible)
     setShown(data.borderOverlayFrame, visible)
     setShown(data.overlayFrame, visible)
     setShown(data.ccOverlayFrame, visible)
@@ -1976,6 +2010,37 @@ end
 --  Priorité :   aggro totale > aggro partielle > cible > focus > HP critique > fade out
 --  Un seul glow change de couleur/intensité selon l'état le plus urgent.
 -------------------------------------------------------------------------------
+local function HideTargetRipples(data)
+    if not data or not data.targetRipples then return end
+    data._targetRippleTime = 0
+    for _, ripple in ipairs(data.targetRipples) do
+        ripple:SetAlpha(0)
+        ripple:Hide()
+    end
+end
+
+local function UpdateTargetRipples(data, cfg, dt, r, g, b, alpha)
+    if not data or not data.targetRipples then return end
+    local baseSize = data.orbSize or 64
+    local speed = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_speed) or 1.15))
+    local maxScale = math.max(1.05, math.min(3.00, tonumber(cfg.target_ripple_size) or 1.85))
+    local trail = math.max(0.05, math.min(1.00, tonumber(cfg.target_ripple_trail) or 0.55))
+    local t = (data._targetRippleTime or 0) + (dt or 0) * speed
+    data._targetRippleTime = t % 1
+
+    for i, ripple in ipairs(data.targetRipples) do
+        local p = (data._targetRippleTime + (i - 1) / 3) % 1
+        local scale = 0.34 + (maxScale - 0.34) * p
+        local size = baseSize * scale
+        local fade = 1 - p
+        local a = alpha * trail * fade * fade
+        ripple:SetSize(size, size)
+        ripple:SetVertexColor(r, g, b, 1)
+        ripple:SetAlpha(a)
+        ripple:Show()
+    end
+end
+
 function SP.Orb:AnimTick(dt)
     for _, data in pairs(SP.Plates) do
         local sg = data.singleGlow
@@ -1992,6 +2057,9 @@ function SP.Orb:AnimTick(dt)
 
             -- Accumulateur de temps partagé (réinitialisé à 0 quand inactif)
             data._glowTime = (data._glowTime or 0) + dt
+            local useTargetRipple = isTarget and cfg.target_glow_enabled ~= false
+                and cfg.target_glow_style == "ripple" and data._sphereVisible ~= false
+            if not useTargetRipple then HideTargetRipples(data) end
 
             -- ── Pack Mode + Scale hors-cible (Solutions A+B+C) ─────────────────
             -- Résout la scale et l'alpha cibles selon le rang et le mode actif,
@@ -2165,7 +2233,14 @@ function SP.Orb:AnimTick(dt)
                     tb = cfg.target_glowB or tb
                 end
                 sg:SetVertexColor(tr, tg, tb)
-                if cfg.target_glow_pulse == false then
+                if cfg.target_glow_style == "ripple" then
+                    local pulseAlpha = ta
+                    if cfg.target_glow_pulse ~= false then
+                        pulseAlpha = (ta * 0.35) + (ta * 0.25) * math.abs(math.sin(data._glowTime * 2.0))
+                    end
+                    sg:SetAlpha(pulseAlpha)
+                    UpdateTargetRipples(data, cfg, dt, tr, tg, tb, ta)
+                elseif cfg.target_glow_pulse == false then
                     sg:SetAlpha(ta)
                 else
                     sg:SetAlpha((ta * 0.52) + (ta * 0.48) * math.abs(math.sin(data._glowTime * 2.5)))
@@ -2188,6 +2263,7 @@ function SP.Orb:AnimTick(dt)
                     sg:SetAlpha(math.max(0, a - dt * 2.5))
                 else
                     data._glowTime = 0   -- reset pour éviter l'accumulation
+                    data._targetRippleTime = 0
                 end
             end
         end

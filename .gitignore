@@ -1,0 +1,43 @@
+# ============================================================
+# SphereNameplates — .gitignore
+# Ce repo est le livrable public de l'addon.
+# Les fichiers de travail dev (docs AI, backups, prototypes) sont exclus.
+# ============================================================
+
+# --- Documentation AI (stockée dans le repo privé addon-workspace) ---
+CLAUDE.md
+CLAUDE.local.md
+PROJECT_CONTEXT.md
+WIKI.md
+BROKER.md
+Ingenieur_addons.md
+MEMORY.md
+*.local.md
+
+# --- Backups et dev scratch ---
+CCB/
+backups/
+*.bak
+
+# --- Prototypes / R&D (pas de code de prod) ---
+UI.lua
+Animations.lua
+
+# --- Médias de travail (cercles, références, exports design) ---
+media2/cercle*/
+media2/cb_ring/
+media/castbar_mage/
+media/CircularCastbarLibrary/
+
+# --- Système ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.log
+
+# --- Éditeurs ---
+.vscode/
+.idea/
+*.swp
+*~

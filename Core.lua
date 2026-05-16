@@ -1709,6 +1709,45 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
         local unit = cmd:sub(8)
         SP:ForceUpdate(unit)
 
+    elseif cmd == "raidmark" then
+        SP:Print("=== RAID MARKERS ===")
+        local db = SP.db or {}
+        SP:Print("enabled=" .. tostring(db.raidmark_global_enabled ~= false)
+            .. " custom=" .. tostring(db.raidmark_custom_enabled ~= false)
+            .. " pack=" .. tostring(db.raidmark_pack or "sign_mark")
+            .. " position=" .. tostring(db.raidmark_position_mode or "sphere"))
+        local count = 0
+        for unit, data in pairs(SP.Plates or {}) do
+            count = count + 1
+            local okMark, mark = pcall(GetRaidTargetIndex, unit)
+            local alias = ""
+            if UnitIsUnit then
+                for _, token in ipairs({"target", "mouseover", "focus"}) do
+                    local okSame, same = pcall(UnitIsUnit, unit, token)
+                    if okSame and same then
+                        local okA, mA = pcall(GetRaidTargetIndex, token)
+                        alias = alias .. " " .. token .. "=" .. tostring(okA and mA or "err")
+                    end
+                end
+            end
+            local dbg = data and data._raidMarkDebug or {}
+            local shown = data and data.raidIconFrame and data.raidIconFrame:IsShown()
+            SP:Print(tostring(unit)
+                .. " type=" .. tostring(data and data.unitType or "?")
+                .. " mark=" .. tostring(okMark and mark or "err")
+                .. alias
+                .. " shown=" .. tostring(shown)
+                .. " reason=" .. tostring(dbg.reason)
+                .. " source=" .. tostring(dbg.source)
+                .. " resolved=" .. tostring(dbg.mark))
+            if count >= 8 then
+                SP:Print("(limite a 8 unites)")
+                break
+            end
+        end
+        if count == 0 then SP:Print("Aucune nameplate active.") end
+        SP:Print("=== FIN RAID MARKERS ===")
+
     elseif cmd == "hpcolor" then
         SP:Print("=== HP COLOR ===")
         local count = 0

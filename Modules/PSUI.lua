@@ -113,9 +113,6 @@ local OPTIONS_NAV = {
     {key="markers",    label="Marqueurs WoW"},
     {key="playerMenu", label="Menu joueur"},
     {key="pack",       label="Mode Pack"},
-    {key="modules",    label="Modules"},
-    {key="logs",       label="Logs"},
-    {key="debug",      label="Debug"},
 }
 
 local COPY_GROUPS = {
@@ -1283,6 +1280,76 @@ function SP.UIPlumber:AddChild(parent, child)
     return child
 end
 
+local function EnsureRaidMarkerPreview(win)
+    if not win or not win.previewArea then return nil end
+    if win.raidMarkerPreview then return win.raidMarkerPreview end
+    local f = CreateFrame("Frame", nil, win.previewArea)
+    f:SetSize(220, 220)
+    f:SetPoint("CENTER", win.previewArea, "CENTER", 0, 2)
+    f:SetFrameStrata("DIALOG")
+    f:SetFrameLevel(470)
+    f.buttons = {}
+    f.glows = {}
+    win.raidMarkerPreview = f
+    return f
+end
+
+local function HideRaidMarkerPreview(win)
+    local f = win and win.raidMarkerPreview
+    if f then f:Hide() end
+end
+
+function SP.UIPlumber:BuildRaidMarkerPreview()
+    local win = self.win
+    local f = EnsureRaidMarkerPreview(win)
+    if not f then return end
+    local db = SP.db or {}
+    local radius = tonumber(db.raidmark_menu_radius) or 58
+    local size = tonumber(db.raidmark_menu_icon_size) or 38
+    local alpha = tonumber(db.raidmark_menu_alpha) or 1
+    local scale = tonumber(db.raidmark_menu_scale) or 1
+    radius = math.max(34, math.min(128, radius))
+    size = math.max(18, math.min(72, size))
+    f:Show()
+    for i = 1, 8 do
+        local btn = f.buttons[i]
+        if not btn then
+            btn = CreateFrame("Frame", nil, f)
+            btn:SetFrameLevel(f:GetFrameLevel() + 2)
+            btn.icon = btn:CreateTexture(nil, "ARTWORK")
+            btn.icon:SetAllPoints(btn)
+            btn.glow = btn:CreateTexture(nil, "OVERLAY")
+            btn.glow:SetTexture("Interface\\Cooldown\\ping4")
+            btn.glow:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.glow:SetBlendMode("ADD")
+            btn.glow:SetAlpha(0)
+            f.buttons[i] = btn
+        end
+        local angle = -math.pi / 2 + (i - 1) * (math.pi * 2 / 8)
+        btn:ClearAllPoints()
+        btn:SetPoint("CENTER", f, "CENTER", math.cos(angle) * radius, -math.sin(angle) * radius)
+        btn:SetSize(size, size)
+        btn:SetScale(scale)
+        btn:SetAlpha(alpha)
+        local tex, uv = nil, nil
+        if SP.GetRaidMarkerIcon then tex, uv = SP:GetRaidMarkerIcon(i, db.raidmark_pack) end
+        btn.icon:SetTexture(tex or ("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. tostring(i)))
+        if uv then
+            btn.icon:SetTexCoord(uv[1] or 0, uv[2] or 1, uv[3] or 0, uv[4] or 1)
+        else
+            btn.icon:SetTexCoord(0, 1, 0, 1)
+        end
+        if i == 8 then
+            btn.glow:SetSize(size * 1.22, size * 1.22)
+            btn.glow:SetVertexColor(0.92, 0.92, 0.86, 1)
+            btn.glow:SetAlpha(0.55)
+        else
+            btn.glow:SetAlpha(0)
+        end
+        btn:Show()
+    end
+end
+
 function SP.UIPlumber:ToggleUnitMenu()
     local win = self.win
     if not win then return end
@@ -1323,6 +1390,39 @@ function SP.UIPlumber:RebuildPreview()
             if self.previewData.root then self.previewData.root:Hide() end
             self.previewData = nil
         end
+        HideRaidMarkerPreview(win)
+        if self.category == "behavior" and self.optionsPage == "markers" then
+            local ok, data = pcall(SP.Orb.Create, SP.Orb, nil, win.fakePlate, "ENEMY")
+            if ok and data then
+                self.previewData = data
+                data.root:ClearAllPoints()
+                data.root:SetPoint("CENTER", win.previewArea, "CENTER", 0, 2)
+                data.root:SetFrameStrata("DIALOG")
+                data.root:SetFrameLevel(450)
+                data.root:Show()
+                pcall(SP.Orb.UpdateFill, SP.Orb, data, 0.72)
+                data.targetHP = 0.72
+                data.displayHP = 0.72
+                data._isTarget = true
+                data._previewName = "Cible marquee"
+                if data.nameText then data.nameText:SetText(data._previewName); data.nameText:Show() end
+                if data.raidIcon then
+                    local tex, uv = nil, nil
+                    if SP.GetRaidMarkerIcon then tex, uv = SP:GetRaidMarkerIcon(8, (SP.db or {}).raidmark_pack) end
+                    data.raidIcon:ClearAllPoints()
+                    data.raidIcon:SetPoint("CENTER", data.orbFrame or data.orb, "CENTER", (SP.db and SP.db.raidmark_offset_x) or 0, (SP.db and SP.db.raidmark_offset_y) or 20)
+                    data.raidIcon:SetSize(((SP.db and SP.db.raidmark_size) or 24) * ((SP.db and SP.db.raidmark_scale) or 1), ((SP.db and SP.db.raidmark_size) or 24) * ((SP.db and SP.db.raidmark_scale) or 1))
+                    data.raidIcon:SetTexture(tex or "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8")
+                    if uv then data.raidIcon:SetTexCoord(uv[1] or 0, uv[2] or 1, uv[3] or 0, uv[4] or 1) else data.raidIcon:SetTexCoord(0, 1, 0, 1) end
+                    data.raidIcon:SetAlpha((SP.db and SP.db.raidmark_alpha) or 1)
+                    if data.raidIconFrame then data.raidIconFrame:Show() end
+                end
+                pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, SP:GetCfg("ENEMY"))
+                self:BuildRaidMarkerPreview()
+            end
+            win.unitTitle:SetText("Marqueurs WoW")
+            return
+        end
         local labels = {behavior="Options globales", modules="Modules et performance", logs="Journal interne"}
         win.unitTitle:SetText(labels[self.category] or "")
         return
@@ -1332,6 +1432,7 @@ function SP.UIPlumber:RebuildPreview()
         if self.previewData.root then self.previewData.root:Hide() end
         self.previewData = nil
     end
+    HideRaidMarkerPreview(win)
     local utype = self:GetUType()
     local ok, data = pcall(SP.Orb.Create, SP.Orb, nil, win.fakePlate, utype)
     if ok and data then
@@ -1599,6 +1700,9 @@ function SP.UIPlumber:BuildSettings()
             if SP.RaidMarkerMenu and SP.RaidMarkerMenu.RefreshAttachments then
                 pcall(SP.RaidMarkerMenu.RefreshAttachments, SP.RaidMarkerMenu)
             end
+            if self and self.RebuildPreview then
+                self:RebuildPreview()
+            end
         end
     end
 
@@ -1606,11 +1710,7 @@ function SP.UIPlumber:BuildSettings()
         self.optionsPage = self.optionsPage or "general"
         local optPage = self.optionsPage or "general"
         add(CreateOptionsNav(c, function() return self.optionsPage or "general" end, function(key)
-            if key == "modules" or key == "logs" then
-                self.category = key
-            else
-                self.optionsPage = key
-            end
+            self.optionsPage = key
             self:RefreshAll()
         end), 34, (#OPTIONS_NAV * 30) + 12)
 
@@ -1659,6 +1759,13 @@ function SP.UIPlumber:BuildSettings()
             add(CreateSlider(c, "Alpha", 0.25, 1.00, 0.05, getDB("raidmark_menu_alpha", 1.0), setDBRaidMark("raidmark_menu_alpha")), 34, 48)
             add(CreateSlider(c, "Scale", 0.70, 1.50, 0.05, getDB("raidmark_menu_scale", 1.0), setDBRaidMark("raidmark_menu_scale")), 34, 48)
             add(CreateCheck(c, "Glow au survol", getDB("raidmark_menu_hover_glow", true), setDBRaidMark("raidmark_menu_hover_glow")), 34, 28)
+            add(CreateCheck(c, "Couleur selection auto", getDB("raidmark_menu_select_color_auto", true), setDBRaidMark("raidmark_menu_select_color_auto")), 34, 28)
+            add(CreateSlider(c, "Taille cercle selection", 0.80, 1.80, 0.02, getDB("raidmark_menu_select_glow_size", 1.12), setDBRaidMark("raidmark_menu_select_glow_size")), 34, 48)
+            add(CreateSlider(c, "Alpha cercle selection", 0.00, 1.00, 0.02, getDB("raidmark_menu_select_glow_alpha", 0.62), setDBRaidMark("raidmark_menu_select_glow_alpha")), 34, 48)
+            add(CreateCheck(c, "Rotation selection", getDB("raidmark_menu_select_rotation", true), setDBRaidMark("raidmark_menu_select_rotation")), 34, 28)
+            add(CreateSlider(c, "Vitesse rotation", 20, 720, 10, getDB("raidmark_menu_select_rotation_speed", 180), setDBRaidMark("raidmark_menu_select_rotation_speed")), 34, 48)
+            add(CreateCheck(c, "Particules selection", getDB("raidmark_menu_select_particles", true), setDBRaidMark("raidmark_menu_select_particles")), 34, 28)
+            add(CreateSlider(c, "Intensite particules", 0.00, 1.00, 0.05, getDB("raidmark_menu_select_particle_alpha", 0.75), setDBRaidMark("raidmark_menu_select_particle_alpha")), 34, 48)
             add(CreateCheck(c, "Fermer apres marquage", getDB("raidmark_menu_close_after_action", true), setDBRaidMark("raidmark_menu_close_after_action")), 34, 28)
         end, 2)
         elseif optPage == "playerMenu" then

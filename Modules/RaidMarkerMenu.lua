@@ -26,6 +26,17 @@ local MARK_LABELS = {
     [8] = "Crane",
 }
 
+local MARK_COLORS = {
+    [1] = {1.00, 0.88, 0.18}, -- star
+    [2] = {1.00, 0.55, 0.05}, -- circle
+    [3] = {0.86, 0.25, 1.00}, -- diamond
+    [4] = {0.30, 1.00, 0.25}, -- triangle
+    [5] = {0.35, 0.65, 1.00}, -- moon
+    [6] = {0.10, 0.95, 1.00}, -- square
+    [7] = {1.00, 0.18, 0.10}, -- cross
+    [8] = {0.92, 0.92, 0.86}, -- skull
+}
+
 local function DB()
     return SP.db or {}
 end
@@ -42,6 +53,22 @@ local function Log(level, msg)
     elseif SP.db and SP.db.raidmark_menu_debug and SP.Print then
         SP:Print("[RaidMarkerMenu] " .. tostring(msg))
     end
+end
+
+local function ClampNumber(value, minValue, maxValue, fallback)
+    value = tonumber(value)
+    if value == nil then value = fallback end
+    if value < minValue then return minValue end
+    if value > maxValue then return maxValue end
+    return value
+end
+
+local function GetMarkColor(mark)
+    if Opt("raidmark_menu_select_color_auto", true) == false then
+        return 1.0, 0.80, 0.16
+    end
+    local c = MARK_COLORS[tonumber(mark) or 0] or MARK_COLORS[1]
+    return c[1], c[2], c[3]
 end
 
 local function GetAnchorFrame(data)
@@ -129,7 +156,15 @@ function RMM:ResetButton(btn)
     btn:SetScale(1)
     btn:SetAlpha(0)
     btn._mark = nil
+    btn._hover = false
+    btn._sparkPhase = 0
     if btn.glow then btn.glow:SetAlpha(0) end
+    if btn.sparks then
+        for _, spark in ipairs(btn.sparks) do
+            spark:SetAlpha(0)
+            spark:Hide()
+        end
+    end
 end
 
 function RMM:GetButton(index)
@@ -161,12 +196,42 @@ function RMM:GetButton(index)
     btn.glow:SetVertexColor(1, 0.8, 0.1, 1)
     btn.glow:SetAlpha(0)
 
+    btn.sparks = {}
+    for i = 1, 3 do
+        local spark = btn:CreateTexture(nil, "OVERLAY")
+        spark:SetTexture(GLOW_TEX)
+        spark:SetBlendMode("ADD")
+        spark:SetSize(8, 8)
+        spark:SetAlpha(0)
+        spark:Hide()
+        btn.sparks[i] = spark
+    end
+
     btn:SetScript("OnEnter", function(selfBtn)
         RMM.hoverButton = selfBtn
-        RMM:ShowLabel(MARK_LABELS[selfBtn._mark] or "")
+        selfBtn._hover = true
+        selfBtn._sparkPhase = 0
+        local r, g, b = GetMarkColor(selfBtn._mark)
+        if selfBtn.glow then
+            selfBtn.glow:SetVertexColor(r, g, b, 1)
+        end
+        if selfBtn.sparks then
+            for _, spark in ipairs(selfBtn.sparks) do
+                spark:SetVertexColor(r, g, b, 1)
+                spark:Show()
+            end
+        end
+        RMM:ShowLabel(MARK_LABELS[selfBtn._mark] or "", selfBtn._mark)
     end)
-    btn:SetScript("OnLeave", function()
+    btn:SetScript("OnLeave", function(selfBtn)
         RMM.hoverButton = nil
+        selfBtn._hover = false
+        if selfBtn.sparks then
+            for _, spark in ipairs(selfBtn.sparks) do
+                spark:SetAlpha(0)
+                spark:Hide()
+            end
+        end
         RMM:ShowLabel("")
     end)
     btn:SetScript("OnClick", function(selfBtn)
@@ -177,7 +242,7 @@ function RMM:GetButton(index)
     return btn
 end
 
-function RMM:ShowLabel(text)
+function RMM:ShowLabel(text, mark)
     local f = self.frame
     if not f then return end
     if not text or text == "" then
@@ -186,6 +251,8 @@ function RMM:ShowLabel(text)
         return
     end
     f.label:SetText(text)
+    local r, g, b = GetMarkColor(mark)
+    f.label:SetTextColor(r, g, b, 1)
     local w = math.max(70, (string.len(text or "") * 8) + 24)
     f.labelBg:SetSize(w, 28)
     f.labelBg:Show()
@@ -199,6 +266,7 @@ function RMM:LayoutButtons(progress)
     local size = tonumber(Opt("raidmark_menu_icon_size", 38)) or 38
     local alpha = tonumber(Opt("raidmark_menu_alpha", 1)) or 1
     local scale = tonumber(Opt("raidmark_menu_scale", 1)) or 1
+    local glowScale = ClampNumber(Opt("raidmark_menu_select_glow_size", 1.12), 0.80, 1.80, 1.12)
     local p = progress or 1
     local r = radius * (0.70 + 0.30 * p)
     for i = 1, 8 do
@@ -211,9 +279,69 @@ function RMM:LayoutButtons(progress)
         btn:SetSize(size, size)
         btn:SetScale(scale)
         btn:SetAlpha(alpha * p)
+        btn._baseScale = scale
+        btn._baseAlpha = alpha * p
+        btn._iconSize = size
+        btn._radius = r
+        btn._angle = angle
+        if btn.glow then
+            local glowSize = size * glowScale
+            btn.glow:ClearAllPoints()
+            btn.glow:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.glow:SetSize(glowSize, glowSize)
+        end
         ApplyMarkerTexture(btn.icon, i)
         btn._mark = i
         btn:Show()
+    end
+end
+
+function RMM:UpdateHoverEffects(elapsed)
+    local f = self.frame
+    if not f then return end
+    local baseScale = tonumber(Opt("raidmark_menu_scale", 1)) or 1
+    local glowAlpha = ClampNumber(Opt("raidmark_menu_select_glow_alpha", 0.62), 0, 1, 0.62)
+    local rotate = Opt("raidmark_menu_select_rotation", true) ~= false
+    local rotationSpeed = ClampNumber(Opt("raidmark_menu_select_rotation_speed", 180), 20, 720, 180)
+    local particles = Opt("raidmark_menu_select_particles", true) ~= false
+    local particleAlpha = ClampNumber(Opt("raidmark_menu_select_particle_alpha", 0.75), 0, 1, 0.75)
+    for _, btn in ipairs(f.buttons or {}) do
+        local hovered = btn == self.hoverButton
+        btn:SetScale(hovered and (baseScale * 1.16) or baseScale)
+        if btn.glow then
+            if hovered and Opt("raidmark_menu_hover_glow", true) ~= false then
+                local r, g, b = GetMarkColor(btn._mark)
+                btn.glow:SetVertexColor(r, g, b, 1)
+                btn.glow:SetAlpha(glowAlpha)
+                if rotate and btn.glow.SetRotation then
+                    local phase = ((btn._sparkPhase or 0) + (elapsed or 0) * rotationSpeed / 57.2957795) % 6.2831853
+                    btn._sparkPhase = phase
+                    btn.glow:SetRotation(phase)
+                end
+            else
+                btn.glow:SetAlpha(0)
+            end
+        end
+        if btn.sparks then
+            if hovered and particles then
+                local phase = (btn._sparkPhase or 0)
+                local radius = (btn._iconSize or 38) * 0.56
+                local r, g, b = GetMarkColor(btn._mark)
+                for i, spark in ipairs(btn.sparks) do
+                    local a = phase + (i - 1) * 2.0943951
+                    spark:ClearAllPoints()
+                    spark:SetPoint("CENTER", btn, "CENTER", math.cos(a) * radius, math.sin(a) * radius)
+                    spark:SetVertexColor(r, g, b, 1)
+                    spark:SetAlpha(particleAlpha * (0.55 + 0.25 * i))
+                    spark:Show()
+                end
+            else
+                for _, spark in ipairs(btn.sparks) do
+                    spark:SetAlpha(0)
+                    spark:Hide()
+                end
+            end
+        end
     end
 end
 
@@ -280,14 +408,7 @@ function RMM:OnUpdate(elapsed)
 
     if not self.anim then
         self:LayoutButtons(1)
-        for _, btn in ipairs(f.buttons or {}) do
-            if btn == self.hoverButton then
-                btn:SetScale((tonumber(Opt("raidmark_menu_scale", 1)) or 1) * 1.16)
-                if Opt("raidmark_menu_hover_glow", true) ~= false then btn.glow:SetAlpha(0.65) end
-            elseif btn.glow then
-                btn.glow:SetAlpha(0)
-            end
-        end
+        self:UpdateHoverEffects(elapsed)
         return
     end
 
@@ -296,15 +417,7 @@ function RMM:OnUpdate(elapsed)
     local p = math.min(1, self.animT / d)
     if self.anim == "close" then p = 1 - p end
     self:LayoutButtons(p)
-
-    for _, btn in ipairs(f.buttons or {}) do
-        if btn == self.hoverButton then
-            btn:SetScale((tonumber(Opt("raidmark_menu_scale", 1)) or 1) * 1.16)
-            if Opt("raidmark_menu_hover_glow", true) ~= false then btn.glow:SetAlpha(0.65) end
-        elseif btn.glow then
-            btn.glow:SetAlpha(0)
-        end
-    end
+    self:UpdateHoverEffects(elapsed)
 
     if self.animT >= d then
         if self.anim == "close" then

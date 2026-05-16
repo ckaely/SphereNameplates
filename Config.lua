@@ -1469,6 +1469,13 @@ SP.DEFAULTS = { profile = {
     raidmark_menu_alpha     = 1.0,
     raidmark_menu_scale     = 1.0,
     raidmark_menu_hover_glow = true,
+    raidmark_menu_select_color_auto = true,
+    raidmark_menu_select_glow_size = 1.12,
+    raidmark_menu_select_glow_alpha = 0.62,
+    raidmark_menu_select_rotation = true,
+    raidmark_menu_select_rotation_speed = 180,
+    raidmark_menu_select_particles = true,
+    raidmark_menu_select_particle_alpha = 0.75,
     raidmark_menu_close_after_action = true,
     raidmark_menu_debug     = false,
 

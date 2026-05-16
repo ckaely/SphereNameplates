@@ -1101,7 +1101,7 @@ function SP.Orb:UpdateFill(data, ratio)
         end
     end
 
-    local cfg = SP:GetCfg(data.unitType)
+    local cfg = SP:GetCfg(data.unitType) or {}
     -- Utiliser la classe cachée pour éviter SafeUnitClass en contexte tainté (60fps)
     local isPlayer = (data.unitType == "ENEMY_PLAYER" or data.unitType == "FRIENDLY_PLAYER")
     if not data._cachedClass and isPlayer and data.unit then
@@ -1790,6 +1790,30 @@ end
 -------------------------------------------------------------------------------
 --  MARQUE DE RAID
 -------------------------------------------------------------------------------
+local function ResolveRaidMarkerIndex(unit)
+    if not unit or not GetRaidTargetIndex then return nil, "no_unit" end
+
+    local ok, mark = pcall(GetRaidTargetIndex, unit)
+    mark = ok and tonumber(mark) or nil
+    if mark and mark > 0 then return mark, "unit" end
+
+    if UnitIsUnit then
+        local aliases = {"target", "mouseover", "focus"}
+        for _, alias in ipairs(aliases) do
+            local okSame, same = pcall(UnitIsUnit, unit, alias)
+            if okSame and same == true then
+                local okAlias, aliasMark = pcall(GetRaidTargetIndex, alias)
+                aliasMark = okAlias and tonumber(aliasMark) or nil
+                if aliasMark and aliasMark > 0 then
+                    return aliasMark, alias
+                end
+            end
+        end
+    end
+
+    return nil, "none"
+end
+
 function SP.Orb:UpdateRaidMark(data, unit)
     if not data or not data.raidIcon then return end
     local cfg = SP:GetCfg(data.unitType)
@@ -1798,20 +1822,17 @@ function SP.Orb:UpdateRaidMark(data, unit)
         or (db.raidmark_show_all_types ~= true and cfg.raidmark_enabled == false) then
         data.raidIcon:SetAlpha(0)
         if data.raidIconFrame then data.raidIconFrame:Hide() end
+        data._raidMarkDebug = { reason = "disabled", unit = unit }
         return
     end
 
-    local ok, mark = pcall(GetRaidTargetIndex, unit)
-    if not ok then mark = nil end
+    local mark, markSource = ResolveRaidMarkerIndex(unit)
     if mark and mark > 0 and RAID_ICONS[mark] then
         local mode = db.raidmark_position_mode or "sphere"
         if mode == "name" and cfg.showName == false then
             data.raidIcon:SetAlpha(0)
             if data.raidIconFrame then data.raidIconFrame:Hide() end
-            return
-        elseif mode ~= "name" and not SP.Orb:ShouldShowSphere(data, cfg) then
-            data.raidIcon:SetAlpha(0)
-            if data.raidIconFrame then data.raidIconFrame:Hide() end
+            data._raidMarkDebug = { reason = "name_hidden", unit = unit, mark = mark, source = markSource }
             return
         end
 
@@ -1853,10 +1874,16 @@ function SP.Orb:UpdateRaidMark(data, unit)
             data.raidIcon:SetTexCoord(0, 1, 0, 1)
         end
         data.raidIcon:SetAlpha(alpha)
-        if data.raidIconFrame then data.raidIconFrame:Show() end
+        if data.raidIconFrame then
+            data.raidIconFrame:SetFrameLevel((data.root and data.root:GetFrameLevel() or 1) + 30)
+            data.raidIconFrame:SetAlpha(1)
+            data.raidIconFrame:Show()
+        end
+        data._raidMarkDebug = { reason = "shown", unit = unit, mark = mark, source = markSource, tex = tex, mode = mode }
     else
         data.raidIcon:SetAlpha(0)
         if data.raidIconFrame then data.raidIconFrame:Hide() end
+        data._raidMarkDebug = { reason = "no_marker", unit = unit, source = markSource }
     end
 end
 

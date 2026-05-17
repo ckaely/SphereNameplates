@@ -280,6 +280,11 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         if SP.Initialized then
+            -- Pré-peupler le pool d'icônes auras hors combat pour éviter CreateFrame
+            -- en InCombatLockdown lors du premier cycle d'auras.
+            if SP.Auras and SP.Auras.PrewarmPool then
+                pcall(SP.Auras.PrewarmPool, SP.Auras, 24)
+            end
             -- Délai minimal pour que WoW charge les nameplates de zone
             if SP.ApplyNameplateCVars then SP:ApplyNameplateCVars() end
             C_Timer.After(0.5, function() SP:HardRefreshAll() end)

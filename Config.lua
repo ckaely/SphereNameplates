@@ -74,12 +74,19 @@ SP.BOSS_ELITE_FRAME_PATH = SP.MEDIA .. "Dragon_boss_elite.png"
 SP.PLAYER_MENU_LABEL_CAPSULE_PATH = SP.MEDIA .. "player_menu_label_capsule.png"
 
 function SP:GetBorderTexturePath(style)
-    local s = SP.BORDER_STYLES[style or "classique"]
+    if not SP.BORDER_STYLES then return nil end
+    local s = SP.BORDER_STYLES[style] or SP.BORDER_STYLES["solide"]
     return s and s.path or nil
 end
 
 function SP:GetBorderStyleInfo(style)
-    return SP.BORDER_STYLES and SP.BORDER_STYLES[style or "classique"]
+    if not SP.BORDER_STYLES then return nil end
+    -- Si le style demandé existe, le retourner directement.
+    -- Si le style est nil ou invalide (clé absente), retourner "solide" (pas de texture overlay).
+    -- On évite le fallback "classique" qui appliquait une texture inattendue sur les nouveaux profils.
+    local s = SP.BORDER_STYLES[style]
+    if s then return s end
+    return SP.BORDER_STYLES["solide"]  -- fallback sûr : path=nil → overlay caché
 end
 
 -------------------------------------------------------------------------------
@@ -1087,6 +1094,11 @@ local function U(o)
         -- Galaxies rotatives
         orb_galaxies       = true,
         orb_galaxy_alpha   = 0.15,   -- réduit : évite le disque lumineux dans le vide
+        orb_midnight_star  = false,
+        orb_midnight_star_alpha = 0.55,
+        orb_midnight_star_scale = 1.18,
+        orb_midnight_star_speed = 45,
+        orb_midnight_star_dir = "cw",
         -- Shimmer (reflets animés)
         orb_shimmer_alpha  = 0.22,   -- réduit : évite le disque lumineux dans le vide
         -- Vague liquide (DiabolicUI filling textures) — scrolle à la ligne d'eau
@@ -1109,9 +1121,12 @@ local function U(o)
         target_glow_alpha     = 0.85,
         target_glow_style     = "pulse", -- "pulse" | "ripple"
         target_glow_pulse     = true,
-        target_ripple_speed   = 1.15,
-        target_ripple_size    = 1.85,
-        target_ripple_trail   = 0.55,
+        target_ripple_speed   = 1.25,
+        target_ripple_size    = 2.20,
+        target_ripple_trail   = 0.82,
+        target_ripple_intensity = 1.35,
+        target_ripple_saturation = 1.25,
+        target_ripple_width   = 1.20,
         target_scale_enabled  = false,
         target_scale          = 1.0,
         target_priority       = "normal",

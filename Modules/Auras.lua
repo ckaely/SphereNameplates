@@ -265,6 +265,11 @@ local function AcquireIcon(parent)
     local f = table.remove(pool)
     if not f then
         -- Créer un nouveau frame d'icône
+        -- Guard combat : CreateFrame interdit en InCombatLockdown (génère un taint en cascade).
+        -- Le pool doit être pré-peuplé hors combat (PrewarmPool appelé sur PLAYER_ENTERING_WORLD).
+        if InCombatLockdown() then
+            return nil  -- échouer gracieusement, pas d'icône ce cycle
+        end
         f = CreateFrame("Frame", nil, parent)
         f:SetSize(24, 24)
 
@@ -961,6 +966,7 @@ function SP.Auras:SimulateAuras(data)
         local auraType = fa._previewType or "harm"
         if (auraType == "help" and cfg.auras_buff) or (auraType ~= "help" and (cfg.auras_debuff or cfg.auras_control)) then
             local ic = AcquireIcon(data.root)
+            if not ic then break end  -- pool vide en combat : skip
             UpdateAuraIcon(ic, fa, auraType, cfg)
             ic.auraType = auraType
             ic._segment = AnalyzeAura(fa, auraType, nil)
@@ -1042,6 +1048,7 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
         for i = 1, math.min(5, #candidates) do
             local cand = candidates[i]
             local ic = AcquireIcon(data.root)
+            if not ic then break end  -- pool vide en combat : stop l'allocation
             UpdateAuraIcon(ic, cand.aura, cand.auraType, cfg)
             ic.auraType = cand.auraType
             ic._segment = cand
@@ -1082,6 +1089,7 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
         for _, aura in ipairs(auras) do
             if added >= maxCount then break end
             local ic = AcquireIcon(data.root)
+            if not ic then break end  -- pool vide en combat : stop l'allocation
             UpdateAuraIcon(ic, aura, auraType, cfg)
             ic.auraType = auraType
             -- auraInstanceID : lire via pcall (peut être tainted)
@@ -1103,6 +1111,7 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
     RepositionIcons(data)
 
     -- Détection CC : cherche le debuff sans dispelName avec la plus longue expiration
+
     -- _ccExpiry est stocké comme plain number (UntaintNum) — la comparaison est safe.
     local ccExpiry = nil
     for _, ic in ipairs(data.auraIcons) do
@@ -1118,4 +1127,27 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
         end
     end
     pcall(SP.Orb.UpdateCC, SP.Orb, data, ccExpiry)
+end
+
+-------------------------------------------------------------------------------
+--  PRÉ-CHAUFFE DU POOL — à appeler hors combat (PLAYER_ENTERING_WORLD)
+--  Évite CreateFrame en InCombatLockdown lors du premier cycle d'auras.
+--  On utilise UIParent comme parent temporaire ; les frames seront reparentées
+--  par AcquireIcon lors de leur première utilisation réelle.
+-------------------------------------------------------------------------------
+function SP.Auras:PrewarmPool(count)
+    count = count or 24
+    local toCreate = count - #pool
+    if toCreate <= 0 then return end
+    for _ = 1, toCreate do
+        -- AcquireIcon avec UIParent comme parent temporaire crée et retourne une frame.
+        -- On la remet immédiatement dans le pool via ReleaseIcon (chemin interne).
+        local f = AcquireIcon(UIParent)
+        if f then
+            f:Hide()
+            f:ClearAllPoints()
+            f:SetParent(UIParent)
+            table.insert(pool, f)
+        end
+    end
 end

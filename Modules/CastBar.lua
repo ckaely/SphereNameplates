@@ -220,11 +220,15 @@ end
 
 local function _CastGUIDMatches(cb, castGUID)
     if not cb then return true end
+    -- Si l'un des deux GUIDs est nil/tainted → laisser passer (fail-open)
     if not SafeNotNil(castGUID) or not SafeNotNil(cb.castGUID) then return true end
     local ok, same = pcall(function()
         return cb.castGUID == castGUID
     end)
-    return ok and same
+    -- Si le pcall échoue (taint sur la comparaison) → laisser passer
+    -- plutôt que d'ignorer silencieusement l'interruption (return ok and same ignorait le cas tainted)
+    if not ok then return true end
+    return same
 end
 
 -------------------------------------------------------------------------------

@@ -745,14 +745,17 @@ function PCM:Attach(data, unit)
         return
     end
 
+    -- Ne pas créer de frame Button en combat (InCombatLockdown interdit CreateFrame
+    -- sur certains types de frames et génère un taint en cascade).
+    if InCombatLockdown() then return end
     local b = CreateFrame("Button", nil, data.orbFrame)
     b:SetAllPoints(data.orbFrame)
     b:SetFrameLevel((data.orbFrame:GetFrameLevel() or 10) + 30)
     b:EnableMouse(true)
     b:RegisterForClicks("RightButtonUp")
-    -- Retail expose SetPropagateMouseClicks: laisser les clics non geres
-    -- (notamment LeftButton) continuer vers la nameplate quand disponible.
-    pcall(b.SetPropagateMouseClicks, b, true)
+    -- SetPropagateMouseClicks est une fonction protégée sous WoW Midnight :
+    -- l'appeler (même via pcall) génère ADDON_ACTION_BLOCKED. Supprimé.
+    -- Le clic droit fonctionne sans propagation.
     b._spUnit = unit
     b._spData = data
     b:SetScript("OnClick", function(self, button)

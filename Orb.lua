@@ -115,6 +115,8 @@ function SP.Orb:Release(data)
             pcall(ripple.Hide, ripple)
         end
     end
+    data._midnightStarAngle = 0
+    if data.midnightStar then pcall(data.midnightStar.SetRotation, data.midnightStar, 0) end
     if data.raidIcon then pcall(data.raidIcon.SetAlpha, data.raidIcon, 0) end
     if data.raidIconFrame then pcall(data.raidIconFrame.Hide, data.raidIconFrame) end
     if data.bossEliteFrame then pcall(data.bossEliteFrame.Hide, data.bossEliteFrame) end
@@ -536,10 +538,19 @@ function SP.Orb:Create(unit, plate, unitType)
         galaxy1:Hide() ; galaxy2:Hide() ; galaxy3:Hide()
     end
 
+    local midnightStar = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 4)
+    midnightStar:SetTexture("Interface\\AddOns\\SphereNameplates\\media\\midnigt_star.png")
+    midnightStar:SetSize(SIZE * (cfg.orb_midnight_star_scale or 1.18), SIZE * (cfg.orb_midnight_star_scale or 1.18))
+    midnightStar:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    midnightStar:SetBlendMode("ADD")
+    midnightStar:SetAlpha(cfg.orb_midnight_star_alpha or 0.55)
+    midnightStar:AddMaskTexture(mask)
+    if cfg.orb_midnight_star == false then midnightStar:Hide() end
+
     local sA = cfg.orb_shimmer_alpha or 0.22   -- réduit : évite le disque lumineux dans le vide
 
     -- Shimmer 1 (rotation anti-horaire) — par-dessus les galaxies
-    local shimmer1 = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 4)
+    local shimmer1 = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 5)
     shimmer1:SetTexture(M("orb1"))
     shimmer1:SetAllPoints(orbFrame)
     shimmer1:SetBlendMode("ADD")
@@ -550,7 +561,7 @@ function SP.Orb:Create(unit, plate, unitType)
     AddAlphaPulse(shimmer1, sA * 0.55, sA, 5)
 
     -- Shimmer 2 (contra-rotation)
-    local shimmer2 = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 5)
+    local shimmer2 = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 6)
     shimmer2:SetTexture(M("orb2"))
     shimmer2:SetAllPoints(orbFrame)
     shimmer2:SetBlendMode("ADD")
@@ -562,7 +573,7 @@ function SP.Orb:Create(unit, plate, unitType)
     -- ── Spark — ligne de flottaison HP (ancré fillTex TOP, cross-frame) ─────────
     -- fillTex = hpBar:GetStatusBarTexture() — sa hauteur varie avec SetValue.
     -- Anchor cross-frame : le spark SUIT physiquement le niveau HP sans ratio Lua.
-    local spark = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 6)
+    local spark = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 7)
     spark:SetTexture(M("orb_spark"))
     spark:SetSize(SIZE * 0.88, SIZE * 0.10)
     spark:SetPoint("CENTER", fillTex, "TOP", 0, 0)
@@ -865,7 +876,7 @@ function SP.Orb:Create(unit, plate, unitType)
     singleGlow:SetAlpha(0)
 
     local targetRipples = {}
-    for i = 1, 3 do
+    for i = 1, 4 do
         local ripple = root:CreateTexture(nil, "OVERLAY", nil, 4 + i)
         ripple:SetTexture("Interface\\Cooldown\\ping4")
         ripple:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
@@ -925,6 +936,7 @@ function SP.Orb:Create(unit, plate, unitType)
         galaxy1      = galaxy1,
         galaxy2      = galaxy2,
         galaxy3      = galaxy3,
+        midnightStar = midnightStar,
         shimmer1     = shimmer1,
         shimmer2     = shimmer2,
         spark        = spark,
@@ -973,6 +985,7 @@ function SP.Orb:Create(unit, plate, unitType)
         _lastRatio   = nil,
         _displayRatio= nil,
         _glowTime    = 0,   -- accumulateur temps partagé pour singleGlow
+        _midnightStarAngle = 0,
         _isTarget    = false,
         _isFocus     = false,
         _inCombat    = false,
@@ -1261,6 +1274,12 @@ function SP.Orb:SoftUpdate(data, unit)
         data.galaxy3:SetVertexColor(fr, math.min(1, fg*1.1), fb)
         data.galaxy3:SetAlpha(gA * 0.65)
         data.galaxy3:SetShown(cfg.orb_galaxies ~= false)
+    end
+    if data.midnightStar then
+        local msScale = math.max(0.50, math.min(2.50, tonumber(cfg.orb_midnight_star_scale) or 1.18))
+        data.midnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
+        data.midnightStar:SetAlpha(math.max(0, math.min(1, tonumber(cfg.orb_midnight_star_alpha) or 0.55)))
+        data.midnightStar:SetShown(cfg.orb_midnight_star == true)
     end
     -- Shimmer alpha depuis cfg
     local sA = cfg.orb_shimmer_alpha or 0.40
@@ -2022,18 +2041,27 @@ end
 local function UpdateTargetRipples(data, cfg, dt, r, g, b, alpha)
     if not data or not data.targetRipples then return end
     local baseSize = data.orbSize or 64
-    local speed = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_speed) or 1.15))
-    local maxScale = math.max(1.05, math.min(3.00, tonumber(cfg.target_ripple_size) or 1.85))
-    local trail = math.max(0.05, math.min(1.00, tonumber(cfg.target_ripple_trail) or 0.55))
+    local speed = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_speed) or 1.25))
+    local maxScale = math.max(1.05, math.min(3.00, tonumber(cfg.target_ripple_size) or 2.20))
+    local trail = math.max(0.05, math.min(1.00, tonumber(cfg.target_ripple_trail) or 0.82))
+    local intensity = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_intensity) or 1.35))
+    local saturation = math.max(0.00, math.min(2.50, tonumber(cfg.target_ripple_saturation) or 1.25))
+    local width = math.max(0.40, math.min(2.00, tonumber(cfg.target_ripple_width) or 1.20))
+    local grey = (r + g + b) / 3
+    r = math.max(0, math.min(1, grey + (r - grey) * saturation))
+    g = math.max(0, math.min(1, grey + (g - grey) * saturation))
+    b = math.max(0, math.min(1, grey + (b - grey) * saturation))
     local t = (data._targetRippleTime or 0) + (dt or 0) * speed
     data._targetRippleTime = t % 1
 
+    local count = #data.targetRipples
     for i, ripple in ipairs(data.targetRipples) do
-        local p = (data._targetRippleTime + (i - 1) / 3) % 1
-        local scale = 0.34 + (maxScale - 0.34) * p
+        local p = (data._targetRippleTime + (i - 1) / count) % 1
+        local scale = 0.42 + (maxScale - 0.42) * p
         local size = baseSize * scale
         local fade = 1 - p
-        local a = alpha * trail * fade * fade
+        local crest = 0.45 + 0.55 * math.sin((1 - p) * math.pi)
+        local a = math.min(1, alpha * trail * intensity * math.pow(fade, 1.35 / width) * crest)
         ripple:SetSize(size, size)
         ripple:SetVertexColor(r, g, b, 1)
         ripple:SetAlpha(a)
@@ -2060,6 +2088,23 @@ function SP.Orb:AnimTick(dt)
             local useTargetRipple = isTarget and cfg.target_glow_enabled ~= false
                 and cfg.target_glow_style == "ripple" and data._sphereVisible ~= false
             if not useTargetRipple then HideTargetRipples(data) end
+            if data.midnightStar then
+                if cfg.orb_midnight_star == true then
+                    local msScale = math.max(0.50, math.min(2.50, tonumber(cfg.orb_midnight_star_scale) or 1.18))
+                    local msAlpha = math.max(0.00, math.min(1.00, tonumber(cfg.orb_midnight_star_alpha) or 0.55))
+                    local msSpeed = math.max(0, math.min(360, tonumber(cfg.orb_midnight_star_speed) or 45))
+                    local msDir = cfg.orb_midnight_star_dir == "ccw" and -1 or 1
+                    data._midnightStarAngle = ((data._midnightStarAngle or 0) + dt * msSpeed * msDir) % 360
+                    data.midnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
+                    data.midnightStar:SetRotation(math.rad(data._midnightStarAngle))
+                    data.midnightStar:SetAlpha(msAlpha)
+                    data.midnightStar:Show()
+                else
+                    data._midnightStarAngle = 0
+                    data.midnightStar:SetAlpha(0)
+                    data.midnightStar:Hide()
+                end
+            end
 
             -- ── Pack Mode + Scale hors-cible (Solutions A+B+C) ─────────────────
             -- Résout la scale et l'alpha cibles selon le rang et le mode actif,

@@ -29,7 +29,12 @@ _castPreviewTicker:SetScript("OnUpdate", function(_, elapsed)
     if cb.active then
         -- Animer la castbar preview
         pcall(SP.CastBar.Tick, SP.CastBar, data, now)
-        -- Réinitialiser le timer de restart
+        -- Auto-stop quand le cast de prévisualisation expire (pas de UNIT_SPELLCAST_STOP réel)
+        -- Sans ce stop, cb.active reste true indéfiniment et le cycle auto-loop ne redémarre jamais.
+        if cb.endTime and now >= cb.endTime then
+            pcall(SP.CastBar.StopCast, SP.CastBar, data, false)
+        end
+        -- Réinitialiser le timer de restart (sera recalculé dans la branche else)
         ui._castPreviewRestartAt = nil
     else
         -- Cast terminé → attendre 0.8s puis relancer en alternance
@@ -166,7 +171,9 @@ local COPY_GROUPS = {
     },
     effects = {
         exact = {
-            "orb_galaxies", "orb_galaxy_alpha", "orb_shimmer_alpha", "orb_wave", "orb_wave_alpha",
+            "orb_galaxies", "orb_galaxy_alpha", "orb_midnight_star", "orb_midnight_star_alpha",
+            "orb_midnight_star_scale", "orb_midnight_star_speed", "orb_midnight_star_dir",
+            "orb_shimmer_alpha", "orb_wave", "orb_wave_alpha",
             "orb_wave_speed", "orb_gloss", "orb_gloss_alpha", "orb_spark", "orb_lowhp_glow",
             "anchor_enabled", "anchor_alpha", "showEliteDragon", "quest_enabled", "quest_color_name",
             "quest_sound", "raidmark_enabled", "showCombatIndicator", "npcIconsEnabled",
@@ -2772,9 +2779,12 @@ function SP.UIPlumber:BuildSettings()
             add(CreateSlider(c, "Alpha cible", 0, 1, 0.02, get("target_glow_alpha", 0.85), set("target_glow_alpha")), 34, 48)
             add(CreateCheck(c, "Pulse cible", get("target_glow_pulse", true), set("target_glow_pulse")), 34, 28)
             if get("target_glow_style", "pulse") == "ripple" then
-                add(CreateSlider(c, "Vitesse ondulation", 0.20, 3.00, 0.05, get("target_ripple_speed", 1.15), set("target_ripple_speed")), 34, 48)
-                add(CreateSlider(c, "Taille ondulation", 1.05, 3.00, 0.05, get("target_ripple_size", 1.85), set("target_ripple_size")), 34, 48)
-                add(CreateSlider(c, "Trainee ondulation", 0.05, 1.00, 0.05, get("target_ripple_trail", 0.55), set("target_ripple_trail")), 34, 48)
+                add(CreateSlider(c, "Vitesse ondulation", 0.20, 3.00, 0.05, get("target_ripple_speed", 1.25), set("target_ripple_speed")), 34, 48)
+                add(CreateSlider(c, "Taille ondulation", 1.05, 3.00, 0.05, get("target_ripple_size", 2.20), set("target_ripple_size")), 34, 48)
+                add(CreateSlider(c, "Trainee ondulation", 0.05, 1.00, 0.05, get("target_ripple_trail", 0.82), set("target_ripple_trail")), 34, 48)
+                add(CreateSlider(c, "Intensite ondulation", 0.20, 3.00, 0.05, get("target_ripple_intensity", 1.35), set("target_ripple_intensity")), 34, 48)
+                add(CreateSlider(c, "Saturation ondulation", 0.00, 2.50, 0.05, get("target_ripple_saturation", 1.25), set("target_ripple_saturation")), 34, 48)
+                add(CreateSlider(c, "Epaisseur trainee", 0.40, 2.00, 0.05, get("target_ripple_width", 1.20), set("target_ripple_width")), 34, 48)
             end
         end, 1)
         section("Geometrie cible", "targetGeo", function()
@@ -2790,6 +2800,16 @@ function SP.UIPlumber:BuildSettings()
         section("Effets orbe", "orbfx", function()
             add(CreateCheck(c, "Galaxies", get("orb_galaxies", true), set("orb_galaxies")), 34, 28)
             add(CreateSlider(c, "Alpha galaxies", 0, 1, 0.01, get("orb_galaxy_alpha", 0.15), set("orb_galaxy_alpha")), 34, 48)
+            add(CreateCheck(c, "Etoile Midnight", get("orb_midnight_star", false), set("orb_midnight_star")), 34, 28)
+            if get("orb_midnight_star", false) then
+                add(CreateSlider(c, "Transparence etoile", 0.00, 1.00, 0.02, get("orb_midnight_star_alpha", 0.55), set("orb_midnight_star_alpha")), 34, 48)
+                add(CreateSlider(c, "Taille etoile", 0.50, 2.50, 0.05, get("orb_midnight_star_scale", 1.18), set("orb_midnight_star_scale")), 34, 48)
+                add(CreateSlider(c, "Vitesse rotation etoile", 0, 360, 5, get("orb_midnight_star_speed", 45), set("orb_midnight_star_speed")), 34, 48)
+                add(CreateCycle(c, "Sens rotation etoile", {
+                    {value="cw", label="Horaire"},
+                    {value="ccw", label="Anti-horaire"},
+                }, get("orb_midnight_star_dir", "cw"), set("orb_midnight_star_dir")), 34, 32)
+            end
             add(CreateSlider(c, "Alpha shimmer", 0, 1, 0.01, get("orb_shimmer_alpha", 0.22), set("orb_shimmer_alpha")), 34, 48)
             add(CreateCheck(c, "Vague liquide", get("orb_wave", true), set("orb_wave")), 34, 28)
             add(CreateSlider(c, "Alpha vague", 0, 1, 0.01, get("orb_wave_alpha", 0.38), set("orb_wave_alpha")), 34, 48)

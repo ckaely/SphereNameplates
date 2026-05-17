@@ -80,13 +80,16 @@ function SP.Quest:UpdateUnit(data, unit)
         return
     end
 
-    local guid = UnitGUID(unit)
+    -- UnitGUID peut retourner une secret string en WoW Midnight → pcall obligatoire
+    local guid = nil
+    local okGuid, g = pcall(UnitGUID, unit)
+    if okGuid and type(g) == "string" and g ~= "" then guid = g end
     local now  = GetTime()
 
-    -- Vérifier le cache
+    -- Vérifier le cache (accès via pcall : secret string interdite comme clé directe)
     if guid then
-        local cached = unitQuestCache[guid]
-        if cached and now < cached.expiry then
+        local okRead, cached = pcall(function() return unitQuestCache[guid] end)
+        if okRead and cached and now < cached.expiry then
             self:_Apply(data, unit, cfg, guid, cached.state)
             return
         end
@@ -107,9 +110,9 @@ function SP.Quest:UpdateUnit(data, unit)
         if ok2 and result == true then questState = QUEST_STATE_INCOMPLETE end
     end
 
-    -- Mettre en cache
+    -- Mettre en cache (écriture via pcall : secret string interdite comme clé directe)
     if guid then
-        unitQuestCache[guid] = { state=questState, expiry=now + CACHE_TTL }
+        pcall(function() unitQuestCache[guid] = { state=questState, expiry=now + CACHE_TTL } end)
     end
 
     self:_Apply(data, unit, cfg, guid, questState)
@@ -142,16 +145,20 @@ function SP.Quest:_Apply(data, unit, cfg, guid, questState)
         end
 
         -- Son à la première apparition de ce PNJ de quête
-        if cfg.quest_sound and guid and not soundPlayedGuids[guid] then
-            soundPlayedGuids[guid] = true
-            pcall(PlaySound, QUEST_SOUND_ID, "SFX")
+        -- (accès via pcall : guid peut être une secret string)
+        if cfg.quest_sound and guid then
+            local okSp, already = pcall(function() return soundPlayedGuids[guid] end)
+            if okSp and not already then
+                pcall(function() soundPlayedGuids[guid] = true end)
+                pcall(PlaySound, QUEST_SOUND_ID, "SFX")
+            end
         end
 
         pcall(SP.Orb.UpdateName, SP.Orb, data, unit)
     else
         data.questIcon:SetAlpha(0)
         if data.questText then data.questText:Hide() end
-        if guid then soundPlayedGuids[guid] = nil end
+        if guid then pcall(function() soundPlayedGuids[guid] = nil end) end
     end
 end
 

@@ -146,8 +146,31 @@ local CIRCLE_MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 
 -- isPlayer : hint optionnel (true si unitType == ENEMY_PLAYER/FRIENDLY_PLAYER).
 -- Évite UnitIsPlayer() en contexte tainté WoW Midnight (secret boolean error).
+-- ── Cache GUID global — survit aux recycles de nameplates ───────────────────
+-- Problème : SafeUnitClass échoue à la milliseconde de NAME_PLATE_UNIT_ADDED
+-- (WoW n'a pas encore chargé les données de l'unité). Les textures partent en
+-- couleur fallback. Quand la nameplate réapparaît (rotation de caméra), _cachedClass
+-- est effacé (Release) et le cycle recommence → orbes délavés jusqu'au retry 0.5s.
+-- Solution : stocker la classe résolue par GUID. La réapparition de la même
+-- nameplate est INSTANTANÉE sans aucun cycle d'attente.
+-- Nettoyé sur PLAYER_LEAVING_WORLD (changement de zone).
+local _guidClassCache = {}
+SP._guidClassCache = _guidClassCache   -- expose pour nettoyage externe
+
 SafeUnitClass = function(unit, isPlayer)
     if not unit then return nil end
+
+    -- ── 0. Cache GUID : lookup avant tout appel WoW API ──────────────────────
+    -- UnitGUID est non-tainté et retourne toujours une string stable.
+    local guid = nil
+    local okGuid, g = pcall(UnitGUID, unit)
+    if okGuid and type(g) == "string" and g ~= "" then
+        guid = g
+        local cached = _guidClassCache[guid]
+        if cached then return cached end  -- hit → retour immédiat, zéro latence
+    end
+
+    -- ── 1. Vérification joueur ────────────────────────────────────────────────
     if isPlayer == nil then
         -- Fallback : tenter UnitIsPlayer — peut échouer en contexte tainté
         local ok, res = pcall(function()
@@ -165,24 +188,30 @@ SafeUnitClass = function(unit, isPlayer)
     -- Les entiers ne sont PAS des "secret values" en WoW Midnight.
     -- GetClassInfo est un lookup statique (pas unit-API) → retourne toujours
     -- des valeurs propres, comparables sans risque de taint.
+    local resolved = nil
     if type(classID) == "number" and classID > 0 then
         local okInfo, _, classFile = pcall(GetClassInfo, classID)
         if okInfo and type(classFile) == "string" and classFile ~= "" then
-            return classFile
+            resolved = classFile
         end
     end
 
     -- ── Méthode 2 : comparaison directe du classFilename (fallback) ──────────
     -- Protégée par pcall : si cls est une secret-string en contexte tainté,
     -- la comparaison throw → okSame=false → on passe à la clé suivante.
-    if cls then
+    if not resolved and cls then
         for key in pairs(SP.CLASS_COLORS or {}) do
             local okSame, same = pcall(function() return cls == key end)
-            if okSame and same then return key end
+            if okSame and same then resolved = key; break end
         end
     end
 
-    return nil
+    -- ── Stocker dans le cache GUID si résolu ─────────────────────────────────
+    if resolved and guid then
+        _guidClassCache[guid] = resolved
+    end
+
+    return resolved
 end
 
 SafeSetVertexColor = function(region, r, g, b, a)

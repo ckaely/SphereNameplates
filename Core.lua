@@ -296,6 +296,10 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     elseif event == "PLAYER_LEAVING_WORLD" then
         if SP.Quest then SP.Quest:ClearCache() end
+        -- Vider le cache GUID classe (les tokens nameplateN changent entre zones)
+        if SP._guidClassCache then
+            for k in pairs(SP._guidClassCache) do SP._guidClassCache[k] = nil end
+        end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         if SP.Initialized then

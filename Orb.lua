@@ -877,7 +877,8 @@ function SP.Orb:Create(unit, plate, unitType)
 
     local targetRipples = {}
     for i = 1, 4 do
-        local ripple = root:CreateTexture(nil, "OVERLAY", nil, 4 + i)
+        -- Sublevels 4,5,6,7 — max WoW = 7, donc 4 ripples max avec offset 3
+        local ripple = root:CreateTexture(nil, "OVERLAY", nil, 3 + i)
         ripple:SetTexture("Interface\\Cooldown\\ping4")
         ripple:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
         ripple:SetBlendMode("ADD")

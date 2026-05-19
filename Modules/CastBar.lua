@@ -12,6 +12,7 @@
 -- ÉVÉNEMENTS (par watcher, RegisterUnitEvent) :
 --   UNIT_SPELLCAST_START / STOP / INTERRUPTED / FAILED
 --   UNIT_SPELLCAST_CHANNEL_START / STOP / UPDATE
+--   UNIT_SPELLCAST_INTERRUPTIBLE / NOT_INTERRUPTIBLE
 --   PLAYER_ENTERING_WORLD → re-query état actuel
 -------------------------------------------------------------------------------
 
@@ -107,6 +108,8 @@ local CAST_UNIT_EVENTS = {
     "UNIT_SPELLCAST_CHANNEL_START",
     "UNIT_SPELLCAST_CHANNEL_STOP",
     "UNIT_SPELLCAST_CHANNEL_UPDATE",
+    "UNIT_SPELLCAST_INTERRUPTIBLE",
+    "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
 }
 
 local function SafeNotNil(v)
@@ -213,6 +216,99 @@ local function _PreferSpellID(primary, fallback)
     return nil
 end
 
+local function _NormalizeSeconds(v)
+    v = SP.UntaintNum and SP:UntaintNum(v) or tonumber(v)
+    if not v or v <= 0 then return nil end
+    -- Les APIs Duration retournent habituellement des secondes; certaines
+    -- valeurs anciennes sont en millisecondes. On normalise defensivement.
+    if v > 1000 then v = v / 1000 end
+    return v
+end
+
+local function _DurationMethod(obj, method)
+    if not obj then return nil end
+    local okMethod, fn = pcall(function() return obj[method] end)
+    if not okMethod or not fn then return nil end
+    local ok, v = pcall(fn, obj)
+    if ok then return _NormalizeSeconds(v) end
+    return nil
+end
+
+local function _SpellCastTimeMS(spellId)
+    if not SafeNotNil(spellId) or not (C_Spell and C_Spell.GetSpellInfo) then return nil end
+    local ok, info = pcall(C_Spell.GetSpellInfo, spellId)
+    if ok and type(info) == "table" then
+        local ms = SP.UntaintNum and SP:UntaintNum(info.castTime) or tonumber(info.castTime)
+        if ms and ms > 0 then return ms end
+    end
+    return nil
+end
+
+local function _GetUnitDurationObject(unit, isChannel)
+    if not unit then return nil end
+    local fn = isChannel and UnitChannelDuration or UnitCastingDuration
+    if not fn then return nil end
+    local ok, obj = pcall(fn, unit)
+    if ok and obj then return obj end
+    return nil
+end
+
+local function _ResolveCastTimes(startMS, endMS, durationObj, spellId, isChannel, now)
+    now = now or GetTime()
+    local safeSMS = SP:UntaintNum(startMS)
+    local safeEMS = SP:UntaintNum(endMS)
+    if safeSMS and safeEMS then
+        local startSec = safeSMS / 1000
+        local endSec = safeEMS / 1000
+        local duration = endSec - startSec
+        if duration >= 0.1 and duration <= 600 and math_abs(startSec - now) <= 120 then
+            return startSec, endSec, duration, "unit_ms"
+        end
+    end
+
+    local okDirect, directMS = pcall(function()
+        if startMS ~= nil and endMS ~= nil then return endMS - startMS end
+    end)
+    if okDirect and directMS then
+        local duration = _NormalizeSeconds(directMS / 1000)
+        if duration and duration >= 0.1 and duration <= 600 then
+            local startSec = now
+            local okStart, startRaw = pcall(function() return startMS / 1000 end)
+            if okStart and type(startRaw) == "number" and math_abs(startRaw - now) <= 120 then
+                startSec = startRaw
+            end
+            return startSec, startSec + duration, duration, "unit_ms_direct"
+        end
+    end
+
+    local total = _DurationMethod(durationObj, "GetDuration")
+        or _DurationMethod(durationObj, "GetTotalDuration")
+        or _DurationMethod(durationObj, "GetBaseDuration")
+    local remaining = _DurationMethod(durationObj, "GetRemainingDuration")
+    local elapsed = _DurationMethod(durationObj, "GetElapsedDuration")
+    if total and total >= 0.1 and total <= 600 then
+        if remaining and remaining >= 0 then
+            local endSec = now + math_min(remaining, total)
+            return endSec - total, endSec, total, "duration_object_remaining"
+        elseif elapsed and elapsed >= 0 then
+            local startSec = now - math_min(elapsed, total)
+            return startSec, startSec + total, total, "duration_object_elapsed"
+        else
+            return now, now + total, total, "duration_object_total"
+        end
+    end
+
+    if not isChannel then
+        local castMS = _SpellCastTimeMS(spellId)
+        if castMS and castMS >= 100 then
+            local duration = castMS / 1000
+            return now, now + duration, duration, "spell_cast_time"
+        end
+    end
+
+    return now, now + 3.0, 3.0, "fallback_3s"
+end
+
 local function _EventCastArgs(...)
     local castGUID, spellId = ...
     return castGUID, spellId
@@ -246,22 +342,24 @@ local function _ClassifyCast(unit, notInt, isChannel, cfg)
         return _rgb(cfg.castbar_color_immune, COLOR_IMMUNE), true
     end
 
-    -- channel
-    if isChannel then
-        if isPlayer and cfg.castbar_color_by_class then
-            local cc = _ResolveClassColor(unit)
-            if cc then return cc, false end
-        end
-        return _rgb(cfg.castbar_color_channel, COLOR_CHANNEL), false
-    end
-
-    -- cast non-interruptible joueur
+    -- non-interruptible joueur (cast OU channel). L'etat interruptible doit
+    -- gagner sur "channel", sinon un channel protege reste bleu et semble
+    -- interruptible.
     if notInt then
         if isPlayer and cfg.castbar_color_by_class then
             local cc = _ResolveClassColor(unit)
             if cc then return cc, false end
         end
         return _rgb(cfg.castbar_color_nonint, COLOR_CONTROL), false
+    end
+
+    -- channel interruptible
+    if isChannel then
+        if isPlayer and cfg.castbar_color_by_class then
+            local cc = _ResolveClassColor(unit)
+            if cc then return cc, false end
+        end
+        return _rgb(cfg.castbar_color_channel, COLOR_CHANNEL), false
     end
 
     -- cast interruptible (défaut)
@@ -668,6 +766,93 @@ local function _UpdateCollapseGlow(circ, progress, cfg, now, interrupted, castCo
             glow.core:Show()
         end
     end
+end
+
+local function _ApplyActiveCastColor(data, clr, isImmune, notInt)
+    local cb = data and data.castbar
+    if not (cb and clr) then return end
+
+    cb.interruptible = not notInt
+    cb.isImmune      = isImmune and true or false
+    cb.color         = clr
+
+    local circ = data._cb_circ
+    if cb.cd then
+        cb.cd:SetSwipeColor(clr.r, clr.g, clr.b, 1.0)
+    end
+    if circ and circ.cd2 then
+        circ.cd2:SetSwipeColor(clr.r, clr.g, clr.b, 1.0)
+    end
+    if cb.glowTex then
+        cb.glowTex:SetVertexColor(clr.r, clr.g, clr.b)
+    end
+    if cb.headTex then cb.headTex:SetVertexColor(clr.r, clr.g, clr.b) end
+    if cb.trailTex then cb.trailTex:SetVertexColor(clr.r, clr.g, clr.b) end
+
+    if circ then
+        if circ.v8Segments then _V8ColorSegments(circ, clr) end
+        if circ.dottedSegments then _ColorDotted(circ, clr) end
+        if circ.collapseGlow then
+            local cfg = SP:GetCfg(data.unitType) or {}
+            _UpdateCollapseGlow(circ, circ.collapseGlowProgress or 0, cfg, GetTime(), false, clr)
+        end
+        if circ.trail then
+            for i = 1, #circ.trail do circ.trail[i]:SetVertexColor(clr.r, clr.g, clr.b) end
+        end
+        if circ.comets then
+            for i = 1, #circ.comets do circ.comets[i]:SetVertexColor(clr.r, clr.g, clr.b) end
+        end
+        if circ.radarTrail then
+            for i = 1, #circ.radarTrail do circ.radarTrail[i]:SetVertexColor(clr.r, clr.g, clr.b) end
+        end
+        if circ.pulseRing then circ.pulseRing:SetVertexColor(clr.r, clr.g, clr.b) end
+        if circ.pin12 then circ.pin12:SetVertexColor(clr.r, clr.g, clr.b) end
+        if circ.icoBorder then circ.icoBorder:SetVertexColor(clr.r, clr.g, clr.b) end
+        if circ.v5Border then circ.v5Border:SetVertexColor(clr.r, clr.g, clr.b) end
+        if circ.owGlow then circ.owGlow:SetVertexColor(clr.r, clr.g, clr.b) end
+    end
+
+    if data._cb_ccb and SP.CCB and SP.CCB.Apply then
+        pcall(SP.CCB.Apply, SP.CCB, data, cb.channeling, cb.isImmune, not cb.interruptible)
+    end
+
+    if cb.barFill then
+        pcall(function()
+            cb.barFill:SetGradientAlpha("HORIZONTAL",
+                clr.r * 0.55, clr.g * 0.55, clr.b * 0.55, 1.0,
+                clr.r,        clr.g,        clr.b,        1.0)
+        end)
+    end
+    if cb.barGlowL then cb.barGlowL:SetVertexColor(clr.r, clr.g, clr.b) end
+    if cb.barBorderTop then
+        cb.barBorderTop:SetVertexColor(clr.r * 0.7, clr.g * 0.7, clr.b * 0.7)
+        if cb.barBorderBot then cb.barBorderBot:SetVertexColor(clr.r * 0.7, clr.g * 0.7, clr.b * 0.7) end
+    end
+
+    if cb.lockTex then cb.lockTex:SetAlpha(notInt and 0.75 or 0) end
+    if cb.castName and cb.castName:IsShown() then
+        if isImmune then
+            cb.castName:SetTextColor(1.0, 0.45, 0.45, 1)
+        elseif notInt then
+            cb.castName:SetTextColor(0.88, 0.62, 1.0, 1)
+        else
+            cb.castName:SetTextColor(1.0, 0.88, 0.45, 1)
+        end
+    end
+end
+
+local function _QueryCurrentNotInterruptible(unit, isChannel)
+    if not unit then return nil end
+    local ok, name, notInt = pcall(function()
+        if isChannel then
+            local n, _, _, _, _, _, ni = UnitChannelInfo(unit)
+            return n, ni
+        end
+        local n, _, _, _, _, _, _, ni = UnitCastingInfo(unit)
+        return n, ni
+    end)
+    if not ok or not SafeNotNil(name) then return nil end
+    return SafeBool(notInt, false)
 end
 
 local function _RestoreNameReplacement(data)
@@ -1104,27 +1289,18 @@ end
 --  _ApplyCast — applique l'état de cast
 --  Signature étendue : + iconTex (optionnel)
 -------------------------------------------------------------------------------
-function SP.CastBar:_ApplyCast(data, name, startMS, endMS, notInt, isChannel, iconTex, spellId, castGUID)
+function SP.CastBar:_ApplyCast(data, name, startMS, endMS, notInt, isChannel, iconTex, spellId, castGUID, durationObj)
     local cb = data.castbar
     if not cb then return end
     local safeNotInt = SafeBool(notInt, false)
     local safeIsChannel = SafeBool(isChannel, false)
 
     local now = GetTime()
-    local safeSMS = SP:UntaintNum(startMS) or (now * 1000)
-    local safeEMS = SP:UntaintNum(endMS)   or (safeSMS + 3000)
-    local startSec = safeSMS / 1000
-    local endSec   = safeEMS / 1000
-    local duration = endSec - startSec
-
-    if duration < 0.1 or duration > 600 or math_abs(startSec - now) > 120 then
-        startSec = now
-        duration = math_max(0.5, duration > 0 and duration or 3.0)
-        endSec   = startSec + duration
-    end
+    durationObj = durationObj or _GetUnitDurationObject(data.unit, safeIsChannel)
+    local startSec, endSec, duration, timeSource = _ResolveCastTimes(startMS, endMS, durationObj, spellId, safeIsChannel, now)
 
     local displayName, safeName, nameSource = _ResolveCastDisplayValue(name, spellId, safeIsChannel)
-    SP:Debug(string.format("[CastBar] \"%s\" %.2fs %s src=%s", safeName, duration, safeIsChannel and "[CH]" or "[CAST]", nameSource or "?"))
+    SP:Debug(string.format("[CastBar] \"%s\" %.2fs %s src=%s time=%s", safeName, duration, safeIsChannel and "[CH]" or "[CAST]", nameSource or "?", timeSource or "?"))
     local unit = data.unit or ""
     local cfg = SP:GetCfg(data.unitType) or {}
     local clr, isImmune = _ClassifyCast(unit, safeNotInt, safeIsChannel, cfg)
@@ -1140,6 +1316,8 @@ function SP.CastBar:_ApplyCast(data, name, startMS, endMS, notInt, isChannel, ic
     cb.color         = clr
     cb.spellId       = spellId
     cb.castGUID      = castGUID
+    cb.durationObj   = durationObj
+    cb.timeSource    = timeSource
     cb.castDisplayName = safeName
     cb.castDisplayText = displayName
     cb.castDisplaySource = nameSource
@@ -1394,23 +1572,17 @@ function SP.CastBar:_ApplyCast(data, name, startMS, endMS, notInt, isChannel, ic
     end
 end
 
-function SP.CastBar:_RefreshCastTiming(data, startMS, endMS, notInt, isChannel)
+function SP.CastBar:_RefreshCastTiming(data, startMS, endMS, notInt, isChannel, durationObj)
     local cb = data and data.castbar
     if not (cb and cb.active) then return false end
 
     local now = GetTime()
-    local safeSMS = SP:UntaintNum(startMS)
-    local safeEMS = SP:UntaintNum(endMS)
-    if not (safeSMS and safeEMS) then return false end
-
-    local startSec = safeSMS / 1000
-    local endSec = safeEMS / 1000
-    local duration = endSec - startSec
-    if duration < 0.1 or duration > 600 or math_abs(startSec - now) > 120 then
-        return false
-    end
-
     local safeIsChannel = SafeBool(isChannel, cb.channeling)
+    durationObj = durationObj or _GetUnitDurationObject(data.unit, safeIsChannel) or cb.durationObj
+    local startSec, endSec, duration, timeSource = _ResolveCastTimes(startMS, endMS, durationObj, cb.spellId, safeIsChannel, now)
+    if not (startSec and endSec and duration) then return false end
+    if timeSource == "fallback_3s" then return false end
+
     local safeNotInt = SafeBool(notInt, not cb.interruptible)
     local cfg = SP:GetCfg(data.unitType) or {}
     local clr, isImmune = _ClassifyCast(data.unit or "", safeNotInt, safeIsChannel, cfg)
@@ -1422,6 +1594,8 @@ function SP.CastBar:_RefreshCastTiming(data, startMS, endMS, notInt, isChannel)
     cb.interruptible = not safeNotInt
     cb.isImmune = isImmune
     cb.color = clr
+    cb.durationObj = durationObj
+    cb.timeSource = timeSource
 
     if cb.cd then
         cb.cd:SetSwipeColor(clr.r, clr.g, clr.b, 1.0)
@@ -1442,6 +1616,18 @@ function SP.CastBar:_RefreshCastTiming(data, startMS, endMS, notInt, isChannel)
         cb.castTime:SetText(string.format("%.1fs", math_max(0, endSec - now)))
         cb.castTime:Show()
     end
+    return true
+end
+
+function SP.CastBar:_ApplyInterruptibility(data, notInterruptible, source)
+    local cb = data and data.castbar
+    if not (cb and cb.active) then return false end
+    local safeNotInt = notInterruptible and true or false
+    local cfg = SP:GetCfg(data.unitType) or {}
+    local clr, isImmune = _ClassifyCast(data.unit or "", safeNotInt, cb.channeling, cfg)
+    _ApplyActiveCastColor(data, clr, isImmune, safeNotInt)
+    cb._interruptStateSource = source or "event"
+    SP:Debug(string.format("[CastBar] interruptible=%s src=%s", safeNotInt and "non" or "oui", tostring(source or "event")))
     return true
 end
 
@@ -2320,14 +2506,14 @@ function SP.CastBar:Create(data)
                 end
                 if SafeNotNil(name) or SafeNotNil(spellId) then
                     local ico = GetSpellIcon(spellId)
-                    SP.CastBar:_ApplyCast(d, name, sMS, eMS, notInt, false, ico, spellId, eventCastGUID)
+                    SP.CastBar:_ApplyCast(d, name, sMS, eMS, notInt, false, ico, spellId, eventCastGUID, _GetUnitDurationObject(evUnit, false))
                 end
 
             elseif event == "UNIT_SPELLCAST_DELAYED" then
                 if not isOurUnit(evUnit) then return end
                 if not _CastGUIDMatches(d.castbar, eventCastGUID) then return end
                 local _, _, _, sMS, eMS, _, _, notInt = UnitCastingInfo(evUnit)
-                SP.CastBar:_RefreshCastTiming(d, sMS, eMS, notInt, false)
+                SP.CastBar:_RefreshCastTiming(d, sMS, eMS, notInt, false, _GetUnitDurationObject(evUnit, false))
 
             elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
                 if not isOurUnit(evUnit) then return end
@@ -2353,14 +2539,20 @@ function SP.CastBar:Create(data)
                 end
                 if SafeNotNil(name) or SafeNotNil(spellId) then
                     local ico = GetSpellIcon(spellId)
-                    SP.CastBar:_ApplyCast(d, name, sMS, eMS, notInt, true, ico, spellId, eventCastGUID)
+                    SP.CastBar:_ApplyCast(d, name, sMS, eMS, notInt, true, ico, spellId, eventCastGUID, _GetUnitDurationObject(evUnit, true))
                 end
 
             elseif event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
                 if not isOurUnit(evUnit) then return end
                 if not _CastGUIDMatches(d.castbar, eventCastGUID) then return end
                 local _, _, _, sMS, eMS, _, notInt = UnitChannelInfo(evUnit)
-                SP.CastBar:_RefreshCastTiming(d, sMS, eMS, notInt, true)
+                SP.CastBar:_RefreshCastTiming(d, sMS, eMS, notInt, true, _GetUnitDurationObject(evUnit, true))
+
+            elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE"
+                or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+                if not isOurUnit(evUnit) then return end
+                if not _CastGUIDMatches(d.castbar, eventCastGUID) then return end
+                SP.CastBar:_ApplyInterruptibility(d, event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE", event)
 
             elseif event == "UNIT_SPELLCAST_STOP"
                 or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
@@ -2378,12 +2570,12 @@ function SP.CastBar:Create(data)
                 if not unitToken then return end
                 local n1, _, _, s1, e1, _, _, ni1, sp1 = UnitCastingInfo(unitToken)
                 if SafeNotNil(n1) then
-                    SP.CastBar:_ApplyCast(d, n1, s1, e1, ni1, false, GetSpellIcon(sp1), sp1)
+                    SP.CastBar:_ApplyCast(d, n1, s1, e1, ni1, false, GetSpellIcon(sp1), sp1, nil, _GetUnitDurationObject(unitToken, false))
                     return
                 end
                 local n2, _, _, s2, e2, _, ni2, sp2 = UnitChannelInfo(unitToken)
                 if SafeNotNil(n2) then
-                    SP.CastBar:_ApplyCast(d, n2, s2, e2, ni2, true, GetSpellIcon(sp2), sp2)
+                    SP.CastBar:_ApplyCast(d, n2, s2, e2, ni2, true, GetSpellIcon(sp2), sp2, nil, _GetUnitDurationObject(unitToken, true))
                     return
                 end
                 SP.CastBar:StopCast(d, false)
@@ -2442,7 +2634,7 @@ function SP.CastBar:StartCast(data, unit, isChannel)
         return
     end
 
-    SP.CastBar:_ApplyCast(data, name, sMS, eMS, notInt, isChannel, GetSpellIcon(spellId), spellId)
+    SP.CastBar:_ApplyCast(data, name, sMS, eMS, notInt, isChannel, GetSpellIcon(spellId), spellId, nil, _GetUnitDurationObject(unit, isChannel))
 end
 
 -------------------------------------------------------------------------------
@@ -2828,14 +3020,14 @@ function SP.CastBar:Tick(data, now)
                     local n, _, _, sMS, eMS, _, _, notInt, spID = UnitCastingInfo(unit)
                     if SafeNotNil(n) then
                         found = true
-                        SP.CastBar:_ApplyCast(data, n, sMS, eMS, notInt, false, GetSpellIcon(spID), spID)
+                        SP.CastBar:_ApplyCast(data, n, sMS, eMS, notInt, false, GetSpellIcon(spID), spID, nil, _GetUnitDurationObject(unit, false))
                     end
                 end)
                 if not found then
                     pcall(function()
                         local n, _, _, sMS, eMS, _, notInt, spID = UnitChannelInfo(unit)
                         if SafeNotNil(n) then
-                            SP.CastBar:_ApplyCast(data, n, sMS, eMS, notInt, true, GetSpellIcon(spID), spID)
+                            SP.CastBar:_ApplyCast(data, n, sMS, eMS, notInt, true, GetSpellIcon(spID), spID, nil, _GetUnitDurationObject(unit, true))
                         end
                     end)
                 end
@@ -2890,6 +3082,10 @@ function SP.CastBar:Tick(data, now)
             else
                 cb._runtimeMissingSince = nil
                 cb._runtimeMissingCount = 0
+                local polledNotInt = _QueryCurrentNotInterruptible(data.unit, cb.channeling)
+                if polledNotInt ~= nil and polledNotInt ~= (not cb.interruptible) then
+                    SP.CastBar:_ApplyInterruptibility(data, polledNotInt, "poll")
+                end
             end
         end
     end

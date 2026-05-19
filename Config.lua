@@ -1099,6 +1099,7 @@ local function U(o)
         orb_midnight_star_scale = 1.18,
         orb_midnight_star_speed = 45,
         orb_midnight_star_dir = "cw",
+        orb_midnight_star_class_color = false,
         -- Shimmer (reflets animés)
         orb_shimmer_alpha  = 0.22,   -- réduit : évite le disque lumineux dans le vide
         -- Vague liquide (DiabolicUI filling textures) — scrolle à la ligne d'eau
@@ -1124,6 +1125,7 @@ local function U(o)
         target_ripple_speed   = 1.25,
         target_ripple_size    = 2.20,
         target_ripple_trail   = 0.82,
+        target_ripple_wavelength = 0.25,
         target_ripple_intensity = 1.35,
         target_ripple_saturation = 1.25,
         target_ripple_width   = 1.20,

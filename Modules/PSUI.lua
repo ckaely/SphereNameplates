@@ -173,6 +173,7 @@ local COPY_GROUPS = {
         exact = {
             "orb_galaxies", "orb_galaxy_alpha", "orb_midnight_star", "orb_midnight_star_alpha",
             "orb_midnight_star_scale", "orb_midnight_star_speed", "orb_midnight_star_dir",
+            "orb_midnight_star_class_color",
             "orb_shimmer_alpha", "orb_wave", "orb_wave_alpha",
             "orb_wave_speed", "orb_gloss", "orb_gloss_alpha", "orb_spark", "orb_lowhp_glow",
             "anchor_enabled", "anchor_alpha", "showEliteDragon", "quest_enabled", "quest_color_name",
@@ -2778,10 +2779,11 @@ function SP.UIPlumber:BuildSettings()
             add(CreateColorButton(c, "Couleur cible", getColor("target_glowR", "target_glowG", "target_glowB", 1.0, 0.88, 0.0), setColor("target_glowR", "target_glowG", "target_glowB")), 34, 30)
             add(CreateSlider(c, "Alpha cible", 0, 1, 0.02, get("target_glow_alpha", 0.85), set("target_glow_alpha")), 34, 48)
             add(CreateCheck(c, "Pulse cible", get("target_glow_pulse", true), set("target_glow_pulse")), 34, 28)
-            if get("target_glow_style", "pulse") == "ripple" then
+            if get("target_glow_style", "pulse")() == "ripple" then
                 add(CreateSlider(c, "Vitesse ondulation", 0.20, 3.00, 0.05, get("target_ripple_speed", 1.25), set("target_ripple_speed")), 34, 48)
                 add(CreateSlider(c, "Taille ondulation", 1.05, 3.00, 0.05, get("target_ripple_size", 2.20), set("target_ripple_size")), 34, 48)
                 add(CreateSlider(c, "Trainee ondulation", 0.05, 1.00, 0.05, get("target_ripple_trail", 0.82), set("target_ripple_trail")), 34, 48)
+                add(CreateSlider(c, "Longueur d'onde", 0.08, 0.75, 0.01, get("target_ripple_wavelength", 0.25), set("target_ripple_wavelength")), 34, 48)
                 add(CreateSlider(c, "Intensite ondulation", 0.20, 3.00, 0.05, get("target_ripple_intensity", 1.35), set("target_ripple_intensity")), 34, 48)
                 add(CreateSlider(c, "Saturation ondulation", 0.00, 2.50, 0.05, get("target_ripple_saturation", 1.25), set("target_ripple_saturation")), 34, 48)
                 add(CreateSlider(c, "Epaisseur trainee", 0.40, 2.00, 0.05, get("target_ripple_width", 1.20), set("target_ripple_width")), 34, 48)
@@ -2800,8 +2802,9 @@ function SP.UIPlumber:BuildSettings()
         section("Effets orbe", "orbfx", function()
             add(CreateCheck(c, "Galaxies", get("orb_galaxies", true), set("orb_galaxies")), 34, 28)
             add(CreateSlider(c, "Alpha galaxies", 0, 1, 0.01, get("orb_galaxy_alpha", 0.15), set("orb_galaxy_alpha")), 34, 48)
-            add(CreateCheck(c, "Etoile Midnight", get("orb_midnight_star", false), set("orb_midnight_star")), 34, 28)
-            if get("orb_midnight_star", false) then
+            add(CreateCheck(c, "Light Star", get("orb_midnight_star", false), set("orb_midnight_star")), 34, 28)
+            if get("orb_midnight_star", false)() then
+                add(CreateCheck(c, "Couleur de la sphere", get("orb_midnight_star_class_color", false), set("orb_midnight_star_class_color")), 34, 28)
                 add(CreateSlider(c, "Transparence etoile", 0.00, 1.00, 0.02, get("orb_midnight_star_alpha", 0.55), set("orb_midnight_star_alpha")), 34, 48)
                 add(CreateSlider(c, "Taille etoile", 0.50, 2.50, 0.05, get("orb_midnight_star_scale", 1.18), set("orb_midnight_star_scale")), 34, 48)
                 add(CreateSlider(c, "Vitesse rotation etoile", 0, 360, 5, get("orb_midnight_star_speed", 45), set("orb_midnight_star_speed")), 34, 48)

@@ -85,10 +85,10 @@ end
 local function _ResolveStyle(isChannel, isImmune, notInt, cfg)
     if isImmune then
         return cfg.ccb_boss_style or "Critical"
-    elseif isChannel then
-        return cfg.ccb_channel_style or "Channel"
     elseif notInt then
         return cfg.ccb_notint_style or "Pulse"
+    elseif isChannel then
+        return cfg.ccb_channel_style or "Channel"
     else
         return cfg.ccb_cast_style or "Normal"
     end
@@ -109,10 +109,10 @@ end
 local function _ResolveCastColor(isChannel, isImmune, notInt, cfg)
     if isImmune then
         return _ResolveColor(cfg, "ccb_color_boss")
-    elseif isChannel then
-        return _ResolveColor(cfg, "ccb_color_channel")
     elseif notInt then
         return _ResolveColor(cfg, "ccb_color_notint")
+    elseif isChannel then
+        return _ResolveColor(cfg, "ccb_color_channel")
     else
         return _ResolveColor(cfg, "ccb_color_cast")
     end

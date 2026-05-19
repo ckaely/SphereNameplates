@@ -78,6 +78,15 @@ function SP.Orb:Release(data)
     SafeSetVertexColor(data.galaxy3, 1, 1, 1, 1)
     SafeSetVertexColor(data.waveT1, 1, 1, 1, 1)
     SafeSetVertexColor(data.waveT2, 1, 1, 1, 1)
+    SafeSetVertexColor(data.midnightStar, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgGalaxy1, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgGalaxy2, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgGalaxy3, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgMidnightStar, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgShimmer1, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgShimmer2, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgWaveT1, 1, 1, 1, 1)
+    SafeSetVertexColor(data.bgWaveT2, 1, 1, 1, 1)
     SafeSetVertexColor(data.borderOverlay, 1, 1, 1, 1)
     -- Champs HP / ratio
     data.unit          = nil
@@ -86,6 +95,10 @@ function SP.Orb:Release(data)
     data.displayHP     = nil
     data._lastRatio    = nil
     data._displayRatio = nil
+    data._lastFillR    = nil
+    data._lastFillG    = nil
+    data._lastFillB    = nil
+    data._lastFillA    = nil
     -- État logique
     data._aggroLevel   = 0
     data._isTarget     = false
@@ -379,6 +392,51 @@ local function ResolveFillColor(cfg, unit, ratio, cachedClass, isPlayer)
     return r, g, b, Clamp01(cfg.fill_alpha, 0.88), mode
 end
 
+local function ApplyMidnightStarColor(data, cfg)
+    if not data or not data.midnightStar then return end
+    if cfg and cfg.orb_midnight_star_class_color == true then
+        local r, g, b = data._lastFillR, data._lastFillG, data._lastFillB
+        if r == nil or g == nil or b == nil then
+            local isPlayer = (data.unitType == "ENEMY_PLAYER" or data.unitType == "FRIENDLY_PLAYER")
+            r, g, b = ResolveFillColor(cfg, data.unit, data._displayRatio or data.displayHP or data.targetHP or 1, data._cachedClass, isPlayer)
+        end
+        data.midnightStar:SetVertexColor(r or 1, g or 1, b or 1, 1)
+    else
+        data.midnightStar:SetVertexColor(1, 1, 1, 1)
+    end
+end
+
+local function ApplyBgEffectColor(data, cfg)
+    if not data then return end
+    cfg = cfg or {}
+    local br, bg, bb = cfg.bgR or 0, cfg.bgG or 0, cfg.bgB or 0
+    local ba = Clamp01(cfg.bgAlpha, 1)
+    if data.bgGalaxy1 then data.bgGalaxy1:SetVertexColor(br, bg, bb) end
+    if data.bgGalaxy2 then data.bgGalaxy2:SetVertexColor(br * 0.8, bg * 0.8, math.min(1, bb * 1.15)) end
+    if data.bgGalaxy3 then data.bgGalaxy3:SetVertexColor(br, math.min(1, bg * 1.1), bb) end
+    if data.bgMidnightStar then data.bgMidnightStar:SetVertexColor(br, bg, bb, 1) end
+    if data.bgShimmer1 then data.bgShimmer1:SetVertexColor(br, bg, bb) end
+    if data.bgShimmer2 then data.bgShimmer2:SetVertexColor(br * 0.8, bg * 0.8, math.min(1, bb * 1.1)) end
+    if data.bgWaveT1 then data.bgWaveT1:SetVertexColor(br, bg, bb) end
+    if data.bgWaveT2 then data.bgWaveT2:SetVertexColor(br * 0.85, bg * 0.85, math.min(1, bb * 1.15)) end
+    data._bgEffectAlpha = ba
+
+    local gA = cfg.orb_galaxy_alpha or 0.15
+    local sA = cfg.orb_shimmer_alpha or 0.22
+    local wA = cfg.orb_wave_alpha or 0.38
+    if data.bgGalaxy1 then data.bgGalaxy1:SetAlpha(gA * 0.36 * ba); data.bgGalaxy1:SetShown(cfg.orb_galaxies ~= false) end
+    if data.bgGalaxy2 then data.bgGalaxy2:SetAlpha(gA * 0.28 * ba); data.bgGalaxy2:SetShown(cfg.orb_galaxies ~= false) end
+    if data.bgGalaxy3 then data.bgGalaxy3:SetAlpha(gA * 0.23 * ba); data.bgGalaxy3:SetShown(cfg.orb_galaxies ~= false) end
+    if data.bgMidnightStar then
+        data.bgMidnightStar:SetAlpha((cfg.orb_midnight_star_alpha or 0.55) * 0.30 * ba)
+        data.bgMidnightStar:SetShown(cfg.orb_midnight_star == true)
+    end
+    if data.bgShimmer1 then data.bgShimmer1:SetAlpha(sA * 0.32 * ba) end
+    if data.bgShimmer2 then data.bgShimmer2:SetAlpha(sA * 0.20 * ba) end
+    if data.bgWaveT1 then data.bgWaveT1:SetAlpha(wA * 0.28 * ba); data.bgWaveT1:SetShown(cfg.orb_wave ~= false) end
+    if data.bgWaveT2 then data.bgWaveT2:SetAlpha(wA * 0.18 * ba); data.bgWaveT2:SetShown(cfg.orb_wave ~= false) end
+end
+
 -- ─── Couleurs progressives du nom (4 paliers par ratio HP) ──────────────────
 local function GetProgressiveNameColor(cfg, ratio)
     ratio = tonumber(ratio) or 1
@@ -478,6 +536,13 @@ function SP.Orb:Create(unit, plate, unitType)
     mask:SetTexture(CIRCLE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     mask:SetAllPoints(orbFrame)
 
+    -- Masque vertical pour les effets colorés par la vie : il suit le fill HP.
+    -- Intersection avec le masque circulaire = les FX disparaissent comme la vie.
+    local hpEffectMask = orbFrame:CreateMaskTexture()
+    hpEffectMask:SetTexture(WHITE)
+    hpEffectMask:SetPoint("BOTTOM", orbFrame, "BOTTOM", 0, 0)
+    hpEffectMask:SetSize(SIZE, SIZE)
+
     -- Fond — frame DÉDIÉ à root+1 pour garantir le rendu DERRIÈRE tout le reste.
     -- ⚠ NE PAS mettre bgTex sur orbFrame (root+2) : en WoW Midnight, SetDrawLayer()
     -- dans SoftUpdate peut perturber l'ordre de rendu → fond opaque par-dessus le fill.
@@ -502,6 +567,85 @@ function SP.Orb:Create(unit, plate, unitType)
     bgTex2:SetVertexColor(0.04, 0.04, 0.07)
     bgTex2:SetAlpha(0.04)   -- quasi invisible
     bgTex2:AddMaskTexture(mask)
+
+    -- Effets de fond : copie discrète des FX d'orbe, placée derrière le fill HP.
+    -- Elle garde de la matière dans la portion "vide" sans fausser la lecture de vie.
+    local bgEffectsFrame = CreateFrame("Frame", nil, root)
+    bgEffectsFrame:SetSize(SIZE, SIZE)
+    bgEffectsFrame:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    bgEffectsFrame:SetFrameLevel(root:GetFrameLevel() + 2)
+    local bgEffectAlpha = Clamp01(cfg.bgAlpha, 1)
+
+    local bgGalaxy1 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 1)
+    bgGalaxy1:SetTexture(M("galaxy"))
+    bgGalaxy1:SetSize(SIZE * 1.4, SIZE * 1.4)
+    bgGalaxy1:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    bgGalaxy1:SetBlendMode("ADD")
+    bgGalaxy1:SetAlpha((cfg.orb_galaxy_alpha or 0.15) * 0.36 * bgEffectAlpha)
+    bgGalaxy1:AddMaskTexture(mask)
+    if cfg.orb_galaxies ~= false then AddRotation(bgGalaxy1, 360, 28) end
+
+    local bgGalaxy2 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 2)
+    bgGalaxy2:SetTexture(M("galaxy2"))
+    bgGalaxy2:SetSize(SIZE * 1.2, SIZE * 1.2)
+    bgGalaxy2:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    bgGalaxy2:SetBlendMode("ADD")
+    bgGalaxy2:SetAlpha((cfg.orb_galaxy_alpha or 0.15) * 0.28 * bgEffectAlpha)
+    bgGalaxy2:AddMaskTexture(mask)
+    if cfg.orb_galaxies ~= false then AddRotation(bgGalaxy2, -360, 40, 4) end
+
+    local bgGalaxy3 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 3)
+    bgGalaxy3:SetTexture(M("galaxy3"))
+    bgGalaxy3:SetSize(SIZE * 1.1, SIZE * 1.1)
+    bgGalaxy3:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    bgGalaxy3:SetBlendMode("ADD")
+    bgGalaxy3:SetAlpha((cfg.orb_galaxy_alpha or 0.15) * 0.23 * bgEffectAlpha)
+    bgGalaxy3:AddMaskTexture(mask)
+    if cfg.orb_galaxies ~= false then AddRotation(bgGalaxy3, 360, 18, 8) end
+
+    local bgMidnightStar = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 4)
+    bgMidnightStar:SetTexture("Interface\\AddOns\\SphereNameplates\\media\\light_star.png")
+    bgMidnightStar:SetSize(SIZE * (cfg.orb_midnight_star_scale or 1.18), SIZE * (cfg.orb_midnight_star_scale or 1.18))
+    bgMidnightStar:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
+    bgMidnightStar:SetBlendMode("ADD")
+    bgMidnightStar:SetAlpha((cfg.orb_midnight_star_alpha or 0.55) * 0.30 * bgEffectAlpha)
+    bgMidnightStar:AddMaskTexture(mask)
+
+    local bgShimmer1 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 5)
+    bgShimmer1:SetTexture(M("orb1"))
+    bgShimmer1:SetAllPoints(orbFrame)
+    bgShimmer1:SetBlendMode("ADD")
+    bgShimmer1:SetAlpha((cfg.orb_shimmer_alpha or 0.22) * 0.32 * bgEffectAlpha)
+    bgShimmer1:AddMaskTexture(mask)
+    AddRotation(bgShimmer1, -360, 20)
+
+    local bgShimmer2 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 6)
+    bgShimmer2:SetTexture(M("orb2"))
+    bgShimmer2:SetAllPoints(orbFrame)
+    bgShimmer2:SetBlendMode("ADD")
+    bgShimmer2:SetAlpha((cfg.orb_shimmer_alpha or 0.22) * 0.20 * bgEffectAlpha)
+    bgShimmer2:AddMaskTexture(mask)
+    AddRotation(bgShimmer2, 360, 30, 3)
+
+    local bgWaveT1 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 7)
+    bgWaveT1:SetTexture(M("orb_filling1"))
+    bgWaveT1:SetAllPoints(orbFrame)
+    bgWaveT1:SetBlendMode("ADD")
+    bgWaveT1:SetAlpha((cfg.orb_wave_alpha or 0.38) * 0.28 * bgEffectAlpha)
+    bgWaveT1:AddMaskTexture(mask)
+    if cfg.orb_wave ~= false then AddRotation(bgWaveT1, 360, 22) end
+
+    local bgWaveT2 = bgEffectsFrame:CreateTexture(nil, "ARTWORK", nil, 7)
+    bgWaveT2:SetTexture(M("orb_filling4"))
+    bgWaveT2:SetAllPoints(orbFrame)
+    bgWaveT2:SetBlendMode("ADD")
+    bgWaveT2:SetAlpha((cfg.orb_wave_alpha or 0.38) * 0.18 * bgEffectAlpha)
+    bgWaveT2:AddMaskTexture(mask)
+    if cfg.orb_wave ~= false then AddRotation(bgWaveT2, -360, 31, 3) end
+
+    if cfg.orb_galaxies == false then bgGalaxy1:Hide(); bgGalaxy2:Hide(); bgGalaxy3:Hide() end
+    if cfg.orb_midnight_star == false then bgMidnightStar:Hide() end
+    if cfg.orb_wave == false then bgWaveT1:Hide(); bgWaveT2:Hide() end
 
     -- FILL HP — StatusBar vertical (taint-safe, WoW Midnight 12.x)
     -- Parente : root (pas orbFrame) afin de maîtriser le frame level.
@@ -537,6 +681,7 @@ function SP.Orb:Create(unit, plate, unitType)
     galaxy1:SetAlpha(gA)
     galaxy1:SetVertexColor(fr, fg, fb)
     galaxy1:AddMaskTexture(mask)
+    galaxy1:AddMaskTexture(hpEffectMask)
     if cfg.orb_galaxies ~= false then AddRotation(galaxy1, 360, 28) end
 
     -- Couche 2 : galaxy2.tga contre-rotation
@@ -548,6 +693,7 @@ function SP.Orb:Create(unit, plate, unitType)
     galaxy2:SetAlpha(gA * 0.80)
     galaxy2:SetVertexColor(fr * 0.7, fg * 0.7, math.min(1, fb * 1.3))
     galaxy2:AddMaskTexture(mask)
+    galaxy2:AddMaskTexture(hpEffectMask)
     if cfg.orb_galaxies ~= false then AddRotation(galaxy2, -360, 40, 4) end
 
     -- Couche 3 : galaxy3.tga rotation plus rapide
@@ -559,6 +705,7 @@ function SP.Orb:Create(unit, plate, unitType)
     galaxy3:SetAlpha(gA * 0.65)
     galaxy3:SetVertexColor(fr, math.min(1, fg * 1.1), fb)
     galaxy3:AddMaskTexture(mask)
+    galaxy3:AddMaskTexture(hpEffectMask)
     if cfg.orb_galaxies ~= false then
         AddRotation(galaxy3, 360, 18, 8)
         AddAlphaPulse(galaxy3, gA * 0.4, gA, 6)
@@ -568,12 +715,14 @@ function SP.Orb:Create(unit, plate, unitType)
     end
 
     local midnightStar = overlayOrbFrame:CreateTexture(nil, "ARTWORK", nil, 4)
-    midnightStar:SetTexture("Interface\\AddOns\\SphereNameplates\\media\\midnigt_star.png")
+    midnightStar:SetTexture("Interface\\AddOns\\SphereNameplates\\media\\light_star.png")
     midnightStar:SetSize(SIZE * (cfg.orb_midnight_star_scale or 1.18), SIZE * (cfg.orb_midnight_star_scale or 1.18))
     midnightStar:SetPoint("CENTER", orbFrame, "CENTER", 0, 0)
     midnightStar:SetBlendMode("ADD")
     midnightStar:SetAlpha(cfg.orb_midnight_star_alpha or 0.55)
+    midnightStar:SetVertexColor(1, 1, 1, 1)
     midnightStar:AddMaskTexture(mask)
+    midnightStar:AddMaskTexture(hpEffectMask)
     if cfg.orb_midnight_star == false then midnightStar:Hide() end
 
     local sA = cfg.orb_shimmer_alpha or 0.22   -- réduit : évite le disque lumineux dans le vide
@@ -586,6 +735,7 @@ function SP.Orb:Create(unit, plate, unitType)
     shimmer1:SetAlpha(sA)
     shimmer1:SetVertexColor(fr, fg, fb)
     shimmer1:AddMaskTexture(mask)
+    shimmer1:AddMaskTexture(hpEffectMask)
     AddRotation(shimmer1, -360, 20)
     AddAlphaPulse(shimmer1, sA * 0.55, sA, 5)
 
@@ -597,6 +747,7 @@ function SP.Orb:Create(unit, plate, unitType)
     shimmer2:SetAlpha(sA * 0.60)
     shimmer2:SetVertexColor(fr * 0.8, fg * 0.8, math.min(1, fb * 1.1))
     shimmer2:AddMaskTexture(mask)
+    shimmer2:AddMaskTexture(hpEffectMask)
     AddRotation(shimmer2, 360, 30, 3)
 
     -- ── Spark — ligne de flottaison HP (ancré fillTex TOP, cross-frame) ─────────
@@ -625,6 +776,7 @@ function SP.Orb:Create(unit, plate, unitType)
     waveT1:SetAlpha(wA)
     waveT1:SetVertexColor(fr, fg, fb)
     waveT1:AddMaskTexture(mask)
+    waveT1:AddMaskTexture(hpEffectMask)
     if cfg.orb_wave ~= false then
         AddRotation(waveT1, 360, 22)          -- rotation complète en 22 secondes
     end
@@ -636,6 +788,7 @@ function SP.Orb:Create(unit, plate, unitType)
     waveT2:SetAlpha(wA * 0.65)
     waveT2:SetVertexColor(fr * 0.85, fg * 0.85, math.min(1, fb * 1.15))
     waveT2:AddMaskTexture(mask)
+    waveT2:AddMaskTexture(hpEffectMask)
     if cfg.orb_wave ~= false then
         AddRotation(waveT2, -360, 31, 3)      -- contre-rotation, légèrement décalée
     end
@@ -958,11 +1111,21 @@ function SP.Orb:Create(unit, plate, unitType)
         root         = root,
         orb          = orbFrame,
         bgFrame      = bgFrame,    -- frame dédié root+1 — strictement derrière orbFrame
+        bgEffectsFrame = bgEffectsFrame,
         orbFrame     = orbFrame,
         mask         = mask,
+        hpEffectMask = hpEffectMask,
         fillTex      = fillTex,
         bgTex        = bgTex,
         bgTex2       = bgTex2,
+        bgGalaxy1    = bgGalaxy1,
+        bgGalaxy2    = bgGalaxy2,
+        bgGalaxy3    = bgGalaxy3,
+        bgMidnightStar = bgMidnightStar,
+        bgShimmer1   = bgShimmer1,
+        bgShimmer2   = bgShimmer2,
+        bgWaveT1     = bgWaveT1,
+        bgWaveT2     = bgWaveT2,
         galaxy1      = galaxy1,
         galaxy2      = galaxy2,
         galaxy3      = galaxy3,
@@ -1022,6 +1185,7 @@ function SP.Orb:Create(unit, plate, unitType)
         _aggroLevel  = 0,   -- 0=neutre, 1=faible, 2=moyen, 3=aggro totale
     }
 
+    ApplyBgEffectColor(data, cfg)
     SP.Orb:ApplySphereVisibility(data, cfg)
     return data
 end
@@ -1077,6 +1241,7 @@ function SP.Orb:ApplySphereVisibility(data, cfg)
     end
 
     setShown(data.orbFrame, visible)
+    setShown(data.bgEffectsFrame, visible)
     setShown(data.hpBar, visible)
     setShown(data.overlayOrbFrame, visible)
     setShown(data.glassFrame, visible)
@@ -1162,8 +1327,12 @@ end
 function SP.Orb:UpdateFill(data, ratio)
     if not data then return end
     -- Ratio par défaut : dernier ratio clean connu, ou 1 (plein) si inconnu
+    -- _displayRatio : ratio interpolé (LerpTick, quand actif)
+    -- displayHP     : ratio interpolé par le lerp loop Core.lua (60 FPS) — source primaire
+    -- _lastRatio    : alias SetTargetRatio (code mort, jamais assigné)
+    -- targetHP      : ratio brut du dernier GetHPRatio réussi
     if ratio == nil then
-        ratio = data._displayRatio or data._lastRatio or data.targetHP or 1
+        ratio = data._displayRatio or data.displayHP or data._lastRatio or data.targetHP or 1
     end
     ratio = math.max(0, math.min(1, ratio))
 
@@ -1200,8 +1369,13 @@ function SP.Orb:UpdateFill(data, ratio)
 
     -- ── Couleur dynamique selon HP — paliers orange/rouge depuis la config ─────
     if data.fillTex then data.fillTex:SetVertexColor(fillR, fillG, fillB, fillA) end
+    if data.hpEffectMask then
+        data.hpEffectMask:SetHeight(math.max(1, (data.orbSize or 64) * ratio))
+    end
     -- Stocker la couleur de fill pour applyHPColor (proxy quand ratio Lua est indisponible)
     data._lastFillR, data._lastFillG, data._lastFillB = fillR, fillG, fillB
+    data._lastFillA = fillA
+    ApplyMidnightStarColor(data, cfg)
 
     -- Fill surface : suit la couleur HP (orange/rouge inclus) — CORRIGÉ : était avant la définition de fillR/fillG/fillB
     if data.fillSurface then
@@ -1246,6 +1420,7 @@ function SP.Orb:RefreshUnitColors(data, unit, ratio)
     local fr, fg, fb = ResolveFillColor(cfg, unit, ratio or data._displayRatio or data.displayHP or data.targetHP or 1, data._cachedClass, isPlayer)
 
     data.unit = unit
+    ApplyBgEffectColor(data, cfg)
     SP.Orb:UpdateFill(data, ratio or data._displayRatio or data.displayHP or data.targetHP or 1)
 
     SafeSetVertexColor(data.shimmer2, fr * 0.8, fg * 0.8, math.min(1, fb * 1.1), 1)
@@ -1283,6 +1458,7 @@ function SP.Orb:SoftUpdate(data, unit)
         data.bgTex:SetVertexColor(cfg.bgR or 0, cfg.bgG or 0, cfg.bgB or 0)
         data.bgTex:SetAlpha(cfg.bgAlpha or 1.0)
     end
+    ApplyBgEffectColor(data, cfg)
     -- bgTex2 est sur bgFrame (root+1) — draw order garanti, SetDrawLayer inutile
 
     -- Shimmer/Galaxy/Glow : re-teinter selon fill color de l'unité.
@@ -1309,7 +1485,11 @@ function SP.Orb:SoftUpdate(data, unit)
         local msScale = math.max(0.50, math.min(2.50, tonumber(cfg.orb_midnight_star_scale) or 1.18))
         data.midnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
         data.midnightStar:SetAlpha(math.max(0, math.min(1, tonumber(cfg.orb_midnight_star_alpha) or 0.55)))
+        ApplyMidnightStarColor(data, cfg)
         data.midnightStar:SetShown(cfg.orb_midnight_star == true)
+        if data.bgMidnightStar then
+            data.bgMidnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
+        end
     end
     -- Shimmer alpha depuis cfg
     local sA = cfg.orb_shimmer_alpha or 0.40
@@ -2074,6 +2254,7 @@ local function UpdateTargetRipples(data, cfg, dt, r, g, b, alpha)
     local speed = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_speed) or 1.25))
     local maxScale = math.max(1.05, math.min(3.00, tonumber(cfg.target_ripple_size) or 2.20))
     local trail = math.max(0.05, math.min(1.00, tonumber(cfg.target_ripple_trail) or 0.82))
+    local wavelength = math.max(0.08, math.min(0.75, tonumber(cfg.target_ripple_wavelength) or 0.25))
     local intensity = math.max(0.20, math.min(3.00, tonumber(cfg.target_ripple_intensity) or 1.35))
     local saturation = math.max(0.00, math.min(2.50, tonumber(cfg.target_ripple_saturation) or 1.25))
     local width = math.max(0.40, math.min(2.00, tonumber(cfg.target_ripple_width) or 1.20))
@@ -2086,7 +2267,7 @@ local function UpdateTargetRipples(data, cfg, dt, r, g, b, alpha)
 
     local count = #data.targetRipples
     for i, ripple in ipairs(data.targetRipples) do
-        local p = (data._targetRippleTime + (i - 1) / count) % 1
+        local p = (data._targetRippleTime + (i - 1) * wavelength) % 1
         local scale = 0.42 + (maxScale - 0.42) * p
         local size = baseSize * scale
         local fade = 1 - p
@@ -2127,12 +2308,21 @@ function SP.Orb:AnimTick(dt)
                     data._midnightStarAngle = ((data._midnightStarAngle or 0) + dt * msSpeed * msDir) % 360
                     data.midnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
                     data.midnightStar:SetRotation(math.rad(data._midnightStarAngle))
+                    ApplyMidnightStarColor(data, cfg)
                     data.midnightStar:SetAlpha(msAlpha)
                     data.midnightStar:Show()
+                    if data.bgMidnightStar then
+                        data.bgMidnightStar:SetSize((data.orbSize or 64) * msScale, (data.orbSize or 64) * msScale)
+                        data.bgMidnightStar:SetRotation(math.rad(data._midnightStarAngle))
+                    end
                 else
                     data._midnightStarAngle = 0
                     data.midnightStar:SetAlpha(0)
                     data.midnightStar:Hide()
+                    if data.bgMidnightStar then
+                        data.bgMidnightStar:SetAlpha(0)
+                        data.bgMidnightStar:Hide()
+                    end
                 end
             end
 
@@ -2302,7 +2492,7 @@ function SP.Orb:AnimTick(dt)
                 -- Cible → jaune, pulsé doux
                 local tr, tg, tb = 1.0, 0.88, 0.0
                 local ta = cfg.target_glow_alpha or 0.85
-                if cfg.target_custom_enabled then
+                if cfg.target_custom_enabled or cfg.target_glow_style == "ripple" then
                     tr = cfg.target_glowR or tr
                     tg = cfg.target_glowG or tg
                     tb = cfg.target_glowB or tb

@@ -260,6 +260,11 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             if _ncfg and _ncfg.name_color_mode == "progressive" then
                 pcall(SP.Orb.UpdateName, SP.Orb, data, unit)
             end
+            -- Refresh couleur fill si mode progressive (NEUTRAL et autres non-joueurs
+            -- reçoivent peu de UNIT_HEALTH → la couleur doit être recalculée au poll)
+            if _ncfg and _ncfg.fill_color_mode == "progressive" and data.displayHP then
+                pcall(SP.Orb.UpdateFill, SP.Orb, data, data.displayHP)
+            end
             -- Poll auras : filet de sécurité si UNIT_AURA a été manqué ou pas livré
             if _auras_on and data.auraIcons then
                 pcall(SP.Auras.UpdateUnit, SP.Auras, data, unit, nil)
@@ -452,18 +457,22 @@ function SP:ApplyNameplateCVars()
         return
     end
     local function CV(k, v) pcall(SetCVar, k, v) end
+    local db = SP.db or {}
+    local inInstance = false
+    if SP.IsInInstance then inInstance = SP:IsInInstance() end
+    local forceFriendlyInstance = db.behavior_force_friendly_players_instance ~= false
+
     CV("nameplateShowAll",            "1")
     CV("nameplateShowEnemies",        "1")
-    CV("nameplateShowFriends",        "1")
     CV("nameplateShowEnemyPlayers",   "1")
-    CV("nameplateShowFriendlyPlayers","1")
     CV("nameplateShowEnemyCastBars",  "1")
     CV("nameplateMaxDistance",        "60")
 
-    local inInstance = false
-    if SP.IsInInstance then inInstance = SP:IsInInstance() end
-    if inInstance and SP.db and SP.db.behavior_force_friendly_players_instance then
-        CV("nameplateShowAll",             "1")
+    if inInstance then
+        local showFriendly = forceFriendlyInstance and "1" or "0"
+        CV("nameplateShowFriends",         showFriendly)
+        CV("nameplateShowFriendlyPlayers", showFriendly)
+    else
         CV("nameplateShowFriends",         "1")
         CV("nameplateShowFriendlyPlayers", "1")
     end
@@ -473,7 +482,6 @@ function SP:ApplyNameplateCVars()
     -- Les sphères couvrent 2-3× plus de surface → on élargit l'espacement.
     -- Guard : si un addon comme Plater ou KuiNameplates est présent, on laisse
     -- leur CVar manager prendre le relais pour éviter les conflits.
-    local db = SP.db or {}
     if db.pack_mode_enabled and db.pack_cvar_adjust ~= false then
         local hasConflict = IsAddOnLoaded and (
             IsAddOnLoaded("Plater") or
@@ -841,6 +849,12 @@ function SP:OnPlateAdded(unit)
     end
     SP._retryCount = 0
 
+    if unitType == "FRIENDLY_PLAYER" and SP.IsInInstance and SP:IsInInstance()
+       and SP.db and SP.db.behavior_force_friendly_players_instance == false then
+        SP:HideBlizzardElements(plate)
+        return
+    end
+
     local cfg = SP:GetCfg(unitType)
 
     -- Nettoyer une ancienne sphère sur ce token
@@ -1136,6 +1150,12 @@ function SP:RefreshAll()
         if (cfg.size or 64) ~= data.orbSize then
             toRebuild[unit] = true
         else
+            -- Invalider le cache couleur fill pour forcer un recalcul complet.
+            -- Sans ça, un changement de cfg.fillR ne serait visible qu'au prochain
+            -- event HP (ou poll 0.5s) si le cache _lastFillR est encore valide.
+            data._lastFillR = nil
+            data._lastFillG = nil
+            data._lastFillB = nil
             -- Soft-update immédiat sans toucher aux frames
             pcall(SP.Orb.SoftUpdate, SP.Orb, data, unit)
         end

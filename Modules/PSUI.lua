@@ -21,28 +21,73 @@ SP.UI = SP.UI or {}
 local _castPreviewTicker = CreateFrame("Frame", "SP_PSUI_CastPreviewTicker", UIParent)
 _castPreviewTicker:SetScript("OnUpdate", function(_, elapsed)
     local ui = SP and SP.UIPlumber
-    if not ui or ui.page ~= "castbar" then return end
+    if not ui then return end
     local data = ui.previewData
+    local win  = ui.win
+
+    -- ── Lerp HP simulation ──────────────────────────────────────────────────
+    -- Actif sur toutes les pages dès qu'un previewData existe et qu'une cible
+    -- HP a été demandée via les boutons de scénario.
+    local simTarget = ui._simHP
+    if data and simTarget ~= nil then
+        local current = data.displayHP or 1.0
+        local diff    = simTarget - current
+        if math.abs(diff) > 0.001 then
+            -- Lerp rapide : atteint la cible en ~0.4s
+            local step = math.min(math.abs(diff), 2.5 * elapsed)
+            local newHP = current + (diff > 0 and step or -step)
+            data.displayHP = newHP
+            data.targetHP  = newHP
+            -- Invalider cache fill pour forcer recalcul couleur progressive
+            data._lastFillR = nil; data._lastFillG = nil; data._lastFillB = nil
+            pcall(SP.Orb.UpdateFill, SP.Orb, data, newHP)
+            if data.hpBar then
+                pcall(function()
+                    data.hpBar:SetMinMaxValues(0, 100)
+                    data.hpBar:SetValue(newHP * 100)
+                end)
+            end
+            -- HP text
+            local cfg = data.unitType and SP:GetCfg(data.unitType)
+            if data.levelText and cfg then
+                pcall(SP.ApplyHPTextPair, SP, data.levelText, data.hpSubText, data, nil,
+                    cfg.hpFormat or "percent", cfg.hp_show_percent)
+            end
+        else
+            data.displayHP = simTarget
+            data.targetHP  = simTarget
+        end
+    end
+
+    -- ── Mise à jour du bandeau de statut simulation ─────────────────────────
+    if win and win.simStatus and data then
+        local hp_pct = math.floor((data.displayHP or 1.0) * 100 + 0.5)
+        local combat_str = data._inCombat
+            and "|cFFFF5555⚔ Combat|r"
+            or  "|cFF888888✦ Hors combat|r"
+        local cb = data.castbar
+        local cast_str = (cb and cb.active)
+            and (cb.channeling and "|cFFBB88FF⟳ Canal|r" or "|cFF88BBFF◈ Cast|r")
+            or  ""
+        win.simStatus:SetText(string.format("HP %d%%  %s  %s", hp_pct, combat_str, cast_str))
+    end
+
+    -- ── Cast auto-loop (page castbar uniquement) ────────────────────────────
+    if ui.page ~= "castbar" then return end
     if not (data and data.castbar) then return end
-    local cb   = data.castbar
-    local now  = GetTime()
+    local cb  = data.castbar
+    local now = GetTime()
     if cb.active then
-        -- Animer la castbar preview
         pcall(SP.CastBar.Tick, SP.CastBar, data, now)
-        -- Auto-stop quand le cast de prévisualisation expire (pas de UNIT_SPELLCAST_STOP réel)
-        -- Sans ce stop, cb.active reste true indéfiniment et le cycle auto-loop ne redémarre jamais.
         if cb.endTime and now >= cb.endTime then
             pcall(SP.CastBar.StopCast, SP.CastBar, data, false)
         end
-        -- Réinitialiser le timer de restart (sera recalculé dans la branche else)
         ui._castPreviewRestartAt = nil
     else
-        -- Cast terminé → attendre 0.8s puis relancer en alternance
         if not ui._castPreviewRestartAt then
             ui._castPreviewRestartAt = now + 0.8
         elseif now >= ui._castPreviewRestartAt then
             ui._castPreviewRestartAt = nil
-            -- Alterner : cast → canal → cast → …
             if not ui._castPreviewLastMode or ui._castPreviewLastMode == "channel" then
                 pcall(SP.CastBar.TestCast, SP.CastBar, data, 3.0)
                 ui._castPreviewLastMode = "cast"
@@ -1072,6 +1117,136 @@ function SP.UIPlumber:RefreshLive()
     end
 end
 
+-- ── Panneau de simulation sous la zone de prévisualisation ───────────────────
+-- Boutons HP (5 paliers), toggle combat, cast/canal/interrupt/stop, indicateur.
+-- Rôle : outil d'autodiagnostic — permet de tester en live sans être en jeu.
+local function CreateScenarioBar(win)
+    local left = win.left
+    local bar  = CreateFrame("Frame", nil, left)
+    win.scenarioBar = bar
+    bar:SetSize(256, 128)
+    bar:SetPoint("TOP", win.unitTitle, "BOTTOM", 0, -6)
+
+    bar.bgTex = bar:CreateTexture(nil, "BACKGROUND")
+    bar.bgTex:SetAllPoints()
+    bar.bgTex:SetColorTexture(0.03, 0.03, 0.03, 0.40)
+
+    local titleLbl = Text(bar, "|cFF888888\226\128\148  Simulation  \226\128\148|r", 10, WHITE)
+    titleLbl:SetPoint("TOP", bar, "TOP", 0, -4)
+
+    -- ── HP paliers ─────────────────────────────────────────────────────────
+    local HP_LEVELS = {
+        {label="100%", ratio=1.00, r=0.94, g=0.85, b=0.12},
+        {label="75%",  ratio=0.75, r=0.94, g=0.85, b=0.12},
+        {label="50%",  ratio=0.50, r=0.25, g=0.52, b=0.92},
+        {label="25%",  ratio=0.25, r=0.94, g=0.48, b=0.12},
+        {label="5%",   ratio=0.05, r=0.90, g=0.18, b=0.18},
+    }
+    local hpRow = CreateFrame("Frame", nil, bar)
+    hpRow:SetSize(250, 24)
+    hpRow:SetPoint("TOP", titleLbl, "BOTTOM", 0, -5)
+    local prevHP = nil
+    for _, lvl in ipairs(HP_LEVELS) do
+        local b = CreateFrame("Button", nil, hpRow)
+        b:SetSize(46, 22)
+        if prevHP then b:SetPoint("LEFT", prevHP, "RIGHT", 3, 0)
+        else         b:SetPoint("LEFT", hpRow, "LEFT", 2, 0) end
+        b.bg = b:CreateTexture(nil, "BACKGROUND")
+        b.bg:SetAllPoints()
+        b.bg:SetColorTexture(lvl.r*0.22, lvl.g*0.22, lvl.b*0.22, 0.90)
+        b.lbl = Text(b, lvl.label, 10, {lvl.r, lvl.g, lvl.b})
+        b.lbl:SetPoint("CENTER")
+        local ratio, r2, g2, b2 = lvl.ratio, lvl.r, lvl.g, lvl.b
+        b:SetScript("OnClick",  function()    SP.UIPlumber._simHP = ratio end)
+        b:SetScript("OnEnter",  function(s)   s.bg:SetColorTexture(r2*0.45, g2*0.45, b2*0.45, 0.95) end)
+        b:SetScript("OnLeave",  function(s)   s.bg:SetColorTexture(r2*0.22, g2*0.22, b2*0.22, 0.90) end)
+        prevHP = b
+    end
+
+    -- ── Helpers bouton compact ──────────────────────────────────────────────
+    local function MiniBtn(parent, w, label, r, g, b2, onClick)
+        local btn = CreateFrame("Button", nil, parent)
+        btn:SetSize(w, 22)
+        btn.bg = btn:CreateTexture(nil, "BACKGROUND")
+        btn.bg:SetAllPoints()
+        btn.bg:SetColorTexture(r*0.28, g*0.28, b2*0.28, 0.90)
+        btn.lbl = Text(btn, label, 10, {r, g, b2})
+        btn.lbl:SetPoint("CENTER")
+        btn:SetScript("OnClick",  onClick)
+        btn:SetScript("OnEnter",  function(s) s.bg:SetColorTexture(r*0.50, g*0.50, b2*0.50, 0.95) end)
+        btn:SetScript("OnLeave",  function(s) s.bg:SetColorTexture(r*0.28, g*0.28, b2*0.28, 0.90) end)
+        return btn
+    end
+
+    -- ── Ligne 2 : Combat + Cast + Canal ────────────────────────────────────
+    local statRow = CreateFrame("Frame", nil, bar)
+    statRow:SetSize(250, 24)
+    statRow:SetPoint("TOP", hpRow, "BOTTOM", 0, -3)
+
+    local combatBtn = MiniBtn(statRow, 76, "\226\154\148 Combat", 1.0, 0.35, 0.35, function()
+        local data = SP.UIPlumber.previewData
+        if not data then return end
+        data._inCombat = not data._inCombat
+        local cfg = data.unitType and SP:GetCfg(data.unitType)
+        if cfg then pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, cfg) end
+        local on = data._inCombat
+        local r, g, b3 = on and 1.0 or 0.55, on and 0.35 or 0.55, on and 0.35 or 0.55
+        win.combatBtn.bg:SetColorTexture(r*0.28, g*0.28, b3*0.28, 0.90)
+        win.combatBtn.lbl:SetTextColor(r, g, b3, 1)
+    end)
+    win.combatBtn = combatBtn
+    combatBtn:SetPoint("LEFT", statRow, "LEFT", 2, 0)
+
+    local castBtn = MiniBtn(statRow, 80, "\226\151\136 Cast 10s", 0.40, 0.72, 1.0, function()
+        local data = SP.UIPlumber.previewData
+        if not data or not SP.CastBar then return end
+        pcall(SP.CastBar.TestCast, SP.CastBar, data, 10.0)
+        SP.UIPlumber._castPreviewLastMode    = "cast"
+        SP.UIPlumber._castPreviewRestartAt   = nil
+    end)
+    castBtn:SetPoint("LEFT", combatBtn, "RIGHT", 4, 0)
+
+    local canalBtn = MiniBtn(statRow, 82, "\226\159\179 Canal 10s", 0.72, 0.45, 1.0, function()
+        local data = SP.UIPlumber.previewData
+        if not data or not SP.CastBar then return end
+        pcall(SP.CastBar.TestChannel, SP.CastBar, data, 10.0)
+        SP.UIPlumber._castPreviewLastMode    = "channel"
+        SP.UIPlumber._castPreviewRestartAt   = nil
+    end)
+    canalBtn:SetPoint("LEFT", castBtn, "RIGHT", 4, 0)
+
+    -- ── Ligne 3 : Interrupt + Stop ──────────────────────────────────────────
+    local ctrlRow = CreateFrame("Frame", nil, bar)
+    ctrlRow:SetSize(250, 24)
+    ctrlRow:SetPoint("TOP", statRow, "BOTTOM", 0, -3)
+
+    local intBtn = MiniBtn(ctrlRow, 119, "\226\154\161 Interrupt", 1.0, 0.42, 0.28, function()
+        local data = SP.UIPlumber.previewData
+        if not data or not SP.CastBar then return end
+        pcall(SP.CastBar.StopCast, SP.CastBar, data, true)   -- interrupted=true → anim rouge
+        SP.UIPlumber._castPreviewRestartAt = GetTime() + 2.5
+    end)
+    intBtn:SetPoint("LEFT", ctrlRow, "LEFT", 2, 0)
+
+    local stopBtn = MiniBtn(ctrlRow, 119, "\226\150\160 Stop cast", 0.60, 0.60, 0.60, function()
+        local data = SP.UIPlumber.previewData
+        if not data or not SP.CastBar then return end
+        pcall(SP.CastBar.StopCast, SP.CastBar, data, false)
+        SP.UIPlumber._castPreviewRestartAt = GetTime() + 2.5
+    end)
+    stopBtn:SetPoint("LEFT", intBtn, "RIGHT", 4, 0)
+
+    -- ── Indicateur de statut ────────────────────────────────────────────────
+    local status = Text(bar, "", 10, {0.65, 0.60, 0.52})
+    status:SetPoint("TOP", ctrlRow, "BOTTOM", 0, -3)
+    status:SetJustifyH("CENTER")
+    status:SetWidth(240)
+    win.simStatus = status
+
+    bar:Hide()   -- masqué jusqu'à ce qu'un previewData valide existe
+    return bar
+end
+
 function SP.UIPlumber:BuildWindow()
     local win = CreateFrame("Frame", "SphereNameplatesPlumberStyleFrame", UIParent, "BackdropTemplate")
     self.win = win
@@ -1133,9 +1308,13 @@ function SP.UIPlumber:BuildWindow()
     win.unitTitle = Text(left, "", 16, WHITE)
     win.unitTitle:SetPoint("TOP", win.previewArea, "BOTTOM", 0, -10)
 
+    -- Panneau de simulation — créé ici, ancré sur unitTitle,
+    -- leftDivider sera ancré sur scenarioBar pour pousser le layout vers le bas.
+    CreateScenarioBar(win)
+
     win.leftDivider = CreateDivider(left)
-    win.leftDivider:SetPoint("TOPLEFT", win.unitTitle, "BOTTOMLEFT", -95, -12)
-    win.leftDivider:SetPoint("TOPRIGHT", win.unitTitle, "BOTTOMRIGHT", 95, -12)
+    win.leftDivider:SetPoint("TOPLEFT", win.scenarioBar, "BOTTOMLEFT", -95, -8)
+    win.leftDivider:SetPoint("TOPRIGHT", win.scenarioBar, "BOTTOMRIGHT", 95, -8)
 
     win.profileBar = CreateFrame("Frame", nil, left)
     win.profileBar:SetSize(260, 90)
@@ -1398,6 +1577,9 @@ function SP.UIPlumber:RebuildPreview()
             if self.previewData.root then self.previewData.root:Hide() end
             self.previewData = nil
         end
+        -- Masquer la barre de simulation pour les pages sans prévisualisation orbe
+        if win.scenarioBar then win.scenarioBar:Hide() end
+        self._simHP = nil
         HideRaidMarkerPreview(win)
         if self.category == "behavior" and self.optionsPage == "markers" then
             local ok, data = pcall(SP.Orb.Create, SP.Orb, nil, win.fakePlate, "ENEMY")
@@ -1440,6 +1622,9 @@ function SP.UIPlumber:RebuildPreview()
         if self.previewData.root then self.previewData.root:Hide() end
         self.previewData = nil
     end
+    -- Réinitialiser la simulation HP à 72% (valeur par défaut du preview)
+    self._simHP = 0.72
+    if win.scenarioBar then win.scenarioBar:Hide() end
     HideRaidMarkerPreview(win)
     local utype = self:GetUType()
     local ok, data = pcall(SP.Orb.Create, SP.Orb, nil, win.fakePlate, utype)
@@ -1467,9 +1652,6 @@ function SP.UIPlumber:RebuildPreview()
         if SP.CastBar then
             pcall(SP.CastBar.Create, SP.CastBar, data)
             if self.page == "castbar" then
-                -- Démarrer immédiatement un cast de prévisualisation.
-                -- Le ticker SP_PSUI_CastPreviewTicker animera l'arc et fera
-                -- l'auto-loop cast↔canal de façon transparente.
                 self._castPreviewLastMode = "channel"  -- → premier cycle sera "cast"
                 self._castPreviewRestartAt = nil
                 pcall(SP.CastBar.TestCast, SP.CastBar, data, 3.0)
@@ -1477,6 +1659,15 @@ function SP.UIPlumber:RebuildPreview()
             end
         end
         pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, SP:GetCfg(utype))
+        -- Afficher la barre de simulation maintenant qu'un orbe valide existe
+        if win.scenarioBar then
+            win.scenarioBar:Show()
+            -- Remettre le bouton Combat en état "actif" (rouge, _inCombat=true par défaut)
+            if win.combatBtn then
+                win.combatBtn.bg:SetColorTexture(1.0*0.28, 0.35*0.28, 0.35*0.28, 0.90)
+                win.combatBtn.lbl:SetTextColor(1.0, 0.35, 0.35, 1)
+            end
+        end
     end
     win.unitTitle:SetText(self:GetUnitEntry().title)
 end

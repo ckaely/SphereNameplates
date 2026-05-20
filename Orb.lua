@@ -568,6 +568,19 @@ function SP.Orb:Create(unit, plate, unitType)
     bgTex2:SetAlpha(0.04)   -- quasi invisible
     bgTex2:AddMaskTexture(mask)
 
+    -- bgGloss : reflet de verre neutre dans la ZONE VIDE uniquement.
+    -- Compense la suppression du glassTex de la zone vide (fix contraste).
+    -- Monochrome (blanc neutre, aucune teinte couleur) : maintient la forme 3D
+    -- de la sphère vide sans la colorer comme la zone remplie.
+    -- Alpha très bas : visible juste assez pour percevoir la courbe de la sphère.
+    local bgGloss = bgFrame:CreateTexture(nil, "ARTWORK", nil, -6)
+    bgGloss:SetTexture(M("orb_gloss"))
+    bgGloss:SetAllPoints(bgFrame)
+    bgGloss:SetBlendMode("ADD")
+    bgGloss:SetVertexColor(1, 1, 1)
+    bgGloss:SetAlpha(0.07)   -- subtil : forme sans briller
+    bgGloss:AddMaskTexture(mask)
+
     -- Effets de fond : copie discrète des FX d'orbe, placée derrière le fill HP.
     -- Elle garde de la matière dans la portion "vide" sans fausser la lecture de vie.
     local bgEffectsFrame = CreateFrame("Frame", nil, root)
@@ -813,12 +826,19 @@ function SP.Orb:Create(unit, plate, unitType)
     -- À alpha élevé, ces textures ADD rendent tout le cercle lumineux même à vide.
     -- Slider orb_gloss_alpha dans le config pour ajuster.
     local gOA = cfg.orb_gloss_alpha or 0.20   -- réduit : 0.45 créait le "disque persistant"
+    -- FIX contrast avant/arrière-plan :
+    -- glassTex, glassTex2, glossTex sont en mode ADD plein cercle.
+    -- Sans hpEffectMask, ils illuminent la zone VIDE (au-dessus de la jauge)
+    -- au même titre que la zone remplie → mauvais contraste.
+    -- Solution : ajouter hpEffectMask → ces textures ADD ne rendent QUE
+    -- dans la zone HP remplie, laissant la zone vide sombre et lisible.
     local glassTex = glassFrame:CreateTexture(nil, "OVERLAY", nil, 1)
     glassTex:SetTexture(M("orb-glass"))
     glassTex:SetAllPoints(orbFrame)
     glassTex:SetBlendMode("ADD")
     glassTex:SetAlpha(gOA)
     glassTex:AddMaskTexture(mask)
+    glassTex:AddMaskTexture(hpEffectMask)   -- suit le niveau HP
 
     local glassTex2 = glassFrame:CreateTexture(nil, "OVERLAY", nil, 2)
     glassTex2:SetTexture(M("orb-glass-1"))
@@ -826,6 +846,7 @@ function SP.Orb:Create(unit, plate, unitType)
     glassTex2:SetBlendMode("ADD")
     glassTex2:SetAlpha(gOA * 0.50)
     glassTex2:AddMaskTexture(mask)
+    glassTex2:AddMaskTexture(hpEffectMask)  -- suit le niveau HP
 
     -- ── Gloss rOrbs-style (orb_gloss.tga) ────────────────────────────────────
     local glossTex = glassFrame:CreateTexture(nil, "OVERLAY", nil, 3)
@@ -834,6 +855,7 @@ function SP.Orb:Create(unit, plate, unitType)
     glossTex:SetBlendMode("ADD")
     glossTex:SetAlpha(math.min(1, gOA * 1.20))
     glossTex:AddMaskTexture(mask)
+    glossTex:AddMaskTexture(hpEffectMask)   -- suit le niveau HP
     if cfg.orb_gloss == false then
         glassTex:Hide() ; glassTex2:Hide() ; glossTex:Hide()
     end
@@ -1377,11 +1399,13 @@ function SP.Orb:UpdateFill(data, ratio)
     data._lastFillA = fillA
     ApplyMidnightStarColor(data, cfg)
 
-    -- Fill surface : suit la couleur HP (orange/rouge inclus) — CORRIGÉ : était avant la définition de fillR/fillG/fillB
+    -- Fill surface : ligne de flottaison visible à la frontière HP.
+    -- Alpha boosté : 0.22→0.14 était trop discret avec la correction glassTex.
+    -- Désormais 0.42→0.20 pour une frontière nettement marquée.
     if data.fillSurface then
         data.fillSurface:SetVertexColor(fillR, fillG, fillB)
-        local sfA = (0.22 - (1 - ratio) * 0.08) * fillA   -- 0.22 (plein) → 0.14 (vide)
-        data.fillSurface:SetAlpha(math.max(0.06, sfA))
+        local sfA = (0.42 - (1 - ratio) * 0.22) * fillA   -- 0.42 (plein HP) → 0.20 (presque vide)
+        data.fillSurface:SetAlpha(math.max(0.08, sfA))
     end
 
     if data.shimmer1 then

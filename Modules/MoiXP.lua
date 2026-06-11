@@ -19,8 +19,7 @@ SP.MoiXP = SP.MoiXP or {}
 local X = SP.MoiXP
 
 local UNIT = "player"
-local SEGMENTS = 28
-local SEG_TEX = "Interface\\Cooldown\\ping4"
+local RING_TEX = nil   -- résolu au runtime : SP.SHADOW_CIRCLE_PATH
 
 local function DB()
     return SP.db or {}
@@ -116,7 +115,36 @@ function X:GetReputation()
     return Clamp((standing - lo) / span, 0, 1), fdata.name, fdata.reaction, standing - lo, span
 end
 
--- ── Construction de l'anneau de segments ────────────────────────────────────
+-- ── Construction de l'anneau lisse (v3) ─────────────────────────────────────
+-- Même langage visuel que l'anneau ressource : texture shadowcircle pleine,
+-- découpée par un masque vertical BOTTOM (pattern BUG-038, prouvé en jeu).
+-- L'anneau se remplit de bas en haut avec un DÉGRADÉ vertical ; une piste
+-- sombre rend la portion restante lisible. Rested = remplissage translucide
+-- en avance, sous le fill principal.
+
+local function MakeRingLayer(holder, sub)
+    local tex = holder:CreateTexture(nil, "ARTWORK", nil, sub)
+    tex:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    tex:SetBlendMode("ADD")
+    local mask = holder:CreateMaskTexture()
+    mask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    pcall(tex.AddMaskTexture, tex, mask)
+    return { tex = tex, mask = mask }
+end
+
+-- Dégradé vertical (sombre en bas → vif en haut). Fallback couleur unie.
+local function ApplyGradient(tex, color, alpha)
+    local r, g, b = color[1], color[2], color[3]
+    local ok = pcall(function()
+        tex:SetGradient("VERTICAL",
+            CreateColor(r * 0.45, g * 0.45, b * 0.45, alpha),
+            CreateColor(math.min(1, r * 1.25), math.min(1, g * 1.25), math.min(1, b * 1.25), alpha))
+    end)
+    if not ok then
+        tex:SetVertexColor(r, g, b, 1)
+        tex:SetAlpha(alpha)
+    end
+end
 
 function X:EnsureRing()
     local data = self:GetMoiData()
@@ -128,14 +156,15 @@ function X:EnsureRing()
     holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 27)
     holder:SetPoint("CENTER", data.orbFrame, "CENTER")
 
-    local segs = {}
-    for i = 1, SEGMENTS do
-        local t = holder:CreateTexture(nil, "ARTWORK", nil, 3)
-        t:SetTexture(SEG_TEX)
-        t:SetBlendMode("ADD")
-        t:SetAlpha(0)
-        segs[i] = t
-    end
+    -- Piste sombre : anneau complet discret (la portion non gagnée)
+    local track = holder:CreateTexture(nil, "ARTWORK", nil, 2)
+    track:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    track:SetBlendMode("BLEND")
+    track:SetVertexColor(0.05, 0.05, 0.08, 1)
+    track:SetAlpha(0.55)
+
+    local rested = MakeRingLayer(holder, 3)   -- avance rested, sous le fill
+    local fill   = MakeRingLayer(holder, 4)   -- progression principale
 
     -- Flash de gain (AnimationGroup, pas d'OnUpdate)
     local flash = holder:CreateAnimationGroup()
@@ -145,7 +174,7 @@ function X:EnsureRing()
     a2:SetFromAlpha(0.45); a2:SetToAlpha(1.0); a2:SetDuration(0.45); a2:SetOrder(2)
     a2:SetSmoothing("OUT")
 
-    -- Hotspot tooltip au sommet de l'anneau
+    -- Hotspot tooltip : bande supérieure de l'anneau, large et facile à viser
     local hotspot = CreateFrame("Frame", nil, holder)
     hotspot:EnableMouse(true)
     hotspot:SetScript("OnEnter", function(f) X:ShowTooltip(f) end)
@@ -154,7 +183,9 @@ function X:EnsureRing()
     self.ring = {
         _data = data,
         holder = holder,
-        segs = segs,
+        track = track,
+        fill = fill,
+        rested = rested,
         flash = flash,
         hotspot = hotspot,
     }
@@ -166,40 +197,32 @@ function X:Layout(ring)
     local data = ring._data
     local cfg = CFG()
     local orbSize = tonumber(data.orbSize) or tonumber(cfg.size) or 74
-    local radius = orbSize * 0.5 * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
-    local segSize = math.max(5, orbSize * 0.085)
-    if ring._radius == radius and ring._segSize == segSize then return end
-    ring._radius, ring._segSize = radius, segSize
-    ring.holder:SetSize(radius * 2, radius * 2)
-    for i, t in ipairs(ring.segs) do
-        -- Départ en haut (12h), sens horaire — convention cooldown/XP.
-        local theta = (math.pi / 2) - ((i - 0.5) / SEGMENTS) * (2 * math.pi)
-        t:SetSize(segSize, segSize)
-        t:ClearAllPoints()
-        t:SetPoint("CENTER", ring.holder, "CENTER",
-            math.cos(theta) * radius, math.sin(theta) * radius)
+    local size = orbSize * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
+    if ring._size == size then return end
+    ring._size = size
+    ring.holder:SetSize(size, size)
+    ring.track:ClearAllPoints()
+    ring.track:SetSize(size, size)
+    ring.track:SetPoint("CENTER", ring.holder, "CENTER")
+    for _, layer in ipairs({ring.fill, ring.rested}) do
+        layer.tex:ClearAllPoints()
+        layer.tex:SetSize(size, size)
+        layer.tex:SetPoint("CENTER", ring.holder, "CENTER")
+        layer.mask:ClearAllPoints()
+        layer.mask:SetSize(size * 1.1, size)
+        layer.mask:SetPoint("BOTTOM", ring.holder, "BOTTOM", 0, -size * 0.05)
     end
-    ring.hotspot:SetSize(math.max(20, radius * 0.5), math.max(12, segSize * 1.6))
+    ring.hotspot:SetSize(size * 0.7, math.max(14, size * 0.18))
     ring.hotspot:ClearAllPoints()
-    ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, radius)
+    ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, size * 0.5)
 end
 
-local function PaintSegments(ring, p, pLead, mainColor, leadColor, alpha)
-    local lit  = math.floor(Clamp(p, 0, 1) * SEGMENTS + 0.5)
-    local lead = pLead and math.floor(Clamp(pLead, 0, 1) * SEGMENTS + 0.5) or lit
-    for i, t in ipairs(ring.segs) do
-        if i <= lit then
-            t:SetVertexColor(mainColor[1], mainColor[2], mainColor[3], 1)
-            t:SetAlpha(alpha)
-        elseif i <= lead and leadColor then
-            t:SetVertexColor(leadColor[1], leadColor[2], leadColor[3], 1)
-            t:SetAlpha(alpha * 0.45)
-        else
-            -- Perle éteinte : piste discrète pour lire la progression restante
-            t:SetVertexColor(COLOR_OFF[1], COLOR_OFF[2], COLOR_OFF[3], 1)
-            t:SetAlpha(alpha * 0.30)
-        end
-    end
+-- Remplissage bas → haut : hauteur du masque = ratio (léger débord bas -5%).
+local function SetRingFill(ring, layer, ratio)
+    ratio = Clamp(ratio, 0, 1)
+    local size = ring._size or 74
+    layer.mask:SetHeight(math.max(0.5, size * 1.05 * ratio))
+    layer.tex:SetShown(ratio > 0.004)
 end
 
 -- ── Update principal ────────────────────────────────────────────────────────
@@ -224,12 +247,21 @@ function X:Update()
     if mode == "xp" then
         local p, pRested = self:GetXP()
         if not p then ring.holder:Hide() return end
-        PaintSegments(ring, p, pRested, COLOR_XP, COLOR_RESTED, alpha)
+        SetRingFill(ring, ring.fill, p)
+        ApplyGradient(ring.fill.tex, COLOR_XP, alpha)
+        if pRested and pRested > p + 0.002 then
+            SetRingFill(ring, ring.rested, pRested)
+            ApplyGradient(ring.rested.tex, COLOR_RESTED, alpha * 0.40)
+        else
+            ring.rested.tex:Hide()
+        end
         ring._mode = "xp"
     else
         local p, name = self:GetReputation()
         if not p then ring.holder:Hide() return end
-        PaintSegments(ring, p, nil, COLOR_REP, nil, alpha)
+        SetRingFill(ring, ring.fill, p)
+        ApplyGradient(ring.fill.tex, COLOR_REP, alpha)
+        ring.rested.tex:Hide()
         ring._mode = "reputation"
         ring._repName = name
     end

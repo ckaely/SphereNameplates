@@ -1545,6 +1545,19 @@ SP.DEFAULTS = { profile = {
     moi_hide_blizzard_migrated = 0,
     snp_edit_mode            = false,
 
+    -- UnitFrames Cible / Cible de la cible (Lot G)
+    tuf_target_enabled       = true,
+    tuf_target_x             = 280,
+    tuf_target_y             = -170,
+    tuf_target_scale         = 1.0,
+    tuf_target_locked        = false,
+    tuf_tot_enabled          = true,
+    tuf_tot_x                = 470,
+    tuf_tot_y                = -120,
+    tuf_tot_scale            = 1.0,
+    tuf_tot_locked           = false,
+    tuf_hide_blizzard_target = true,
+
     -- Barres d'actions personnelles (Moi > Barres). Desactivees par defaut,
     -- mais quand elles sont activees elles remplacent les barres Blizzard.
     actionbars = {
@@ -1794,6 +1807,53 @@ SP.DEFAULTS = { profile = {
         auras_maxDebuff=5, auras_maxBuff=5,
         castbar_enabled=true, castbar_mode="collapse_glow",
         raidmark_enabled=false, quest_enabled=false,
+        showCombatIndicator=false, showEliteDragon=false,
+        target_glow_enabled=false, anchor_enabled=false,
+        sphere_display_mode="always",
+        hp_lerp_speed=10.0,
+    }),
+
+    -- UnitFrame Cible (Lot G) — pages épurées : pas de ressources/XP/ilvl/
+    -- barres/comportement Moi. Classification élite + castbar + auras.
+    TARGET = U({
+        size=74, fillR=0.80, fillG=0.10, fillB=0.10,
+        borderR=0.92, borderG=0.72, borderB=0.16, borderWidth=6,
+        borderColorMode="classe", borderClassColor=true,
+        borderStyle="shadowcircle",
+        classColorSphere=true, classColorName=true,
+        name_color_mode="class",
+        showName=true, nameDisplay="above", showSubTitle=false,
+        showLevelOrHP=true, showHPAlsoInOrb=true, hpFormat="both",
+        hp_percent_color_mode="dynamic", hp_absolute_color_mode="fixed",
+        show_hp_under_maxlvl=true, show_ilvl=false,
+        showPower=false, powerOffsetY=4,
+        auras_enabled=true, auras_debuff=true, auras_buff=true,
+        auras_maxDebuff=5, auras_maxBuff=3,
+        castbar_enabled=true, castbar_mode="collapse_glow",
+        raidmark_enabled=true, quest_enabled=false,
+        showCombatIndicator=false, showEliteDragon=true,
+        target_glow_enabled=false, anchor_enabled=false,
+        sphere_display_mode="always",
+        hp_lerp_speed=10.0,
+    }),
+
+    -- UnitFrame Cible de la cible — version compacte, sans castbar/auras.
+    TARGET_TARGET = U({
+        size=52, fillR=0.80, fillG=0.10, fillB=0.10,
+        borderR=0.92, borderG=0.72, borderB=0.16, borderWidth=4,
+        borderColorMode="classe", borderClassColor=true,
+        borderStyle="shadowcircle",
+        classColorSphere=true, classColorName=true,
+        name_color_mode="class",
+        showName=true, nameDisplay="above", showSubTitle=false,
+        showLevelOrHP=true, showHPAlsoInOrb=false, hpFormat="percent",
+        hp_percent_color_mode="dynamic", hp_absolute_color_mode="fixed",
+        show_hp_under_maxlvl=true, show_ilvl=false,
+        showPower=false, powerOffsetY=4,
+        auras_enabled=false, auras_debuff=false, auras_buff=false,
+        auras_maxDebuff=0, auras_maxBuff=0,
+        castbar_enabled=false, castbar_mode="collapse_glow",
+        raidmark_enabled=true, quest_enabled=false,
         showCombatIndicator=false, showEliteDragon=false,
         target_glow_enabled=false, anchor_enabled=false,
         sphere_display_mode="always",

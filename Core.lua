@@ -121,6 +121,9 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                 if SP.Moi and SP.Moi.TickCast then
                     SP.Moi:TickCast(now)
                 end
+                if SP.TargetUF and SP.TargetUF.TickCast then
+                    pcall(SP.TargetUF.TickCast, SP.TargetUF, now)
+                end
             end)
             if SP.Profiler then SP.Profiler:Track("CastBar", debugprofilestop() - _pt0) end
         end
@@ -149,6 +152,9 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             end
             if SP.Moi and SP.Moi.TickHealth then
                 pcall(SP.Moi.TickHealth, SP.Moi)
+            end
+            if SP.TargetUF and SP.TargetUF.TickHealth then
+                pcall(SP.TargetUF.TickHealth, SP.TargetUF)
             end
             if SP.Profiler then SP.Profiler:Track("HPLerp", debugprofilestop() - _pt0) end
         end
@@ -328,6 +334,9 @@ frame:SetScript("OnUpdate", function(_, elapsed)
         end
         if SP.Moi and SP.Moi.Poll then
             pcall(SP.Moi.Poll, SP.Moi)
+        end
+        if SP.TargetUF and SP.TargetUF.Poll then
+            pcall(SP.TargetUF.Poll, SP.TargetUF)
         end
         if SP.Profiler then SP.Profiler:Track("Poll", debugprofilestop() - _pt0) end
         _pollAcc = 0
@@ -646,6 +655,9 @@ function SP:Initialize()
     end
     if SP.MoiXP and SP.MoiXP.Init then
         pcall(SP.MoiXP.Init, SP.MoiXP)
+    end
+    if SP.TargetUF and SP.TargetUF.Init then
+        pcall(SP.TargetUF.Init, SP.TargetUF)
     end
     if SP.ActionBars and SP.ActionBars.Init then
         pcall(SP.ActionBars.Init, SP.ActionBars)

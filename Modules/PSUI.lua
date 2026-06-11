@@ -154,6 +154,17 @@ local UNIT_BY_CATEGORY = {
     moi = {
         {kind="self",   label="Moi",    utype="PLAYER_SELF",  title="Moi"},
     },
+    target_unitframe = {
+        {kind="self",   label="Cible",  utype="TARGET",       title="Cible"},
+    },
+    targettarget_unitframe = {
+        {kind="self",   label="Cible de la cible", utype="TARGET_TARGET", title="Cible de la cible"},
+    },
+}
+
+-- Catégories appartenant à la famille UnitFrames
+local UNITFRAME_CATEGORIES = {
+    moi = true, target_unitframe = true, targettarget_unitframe = true,
 }
 
 local PAGES = {
@@ -1280,7 +1291,7 @@ local function IsSpecialCategory(key)
 end
 
 function SP.UIPlumber:GetFamily()
-    if self.category == "moi" then return "unitframes" end
+    if UNITFRAME_CATEGORIES[self.category] then return "unitframes" end
     if self.category == "behavior" then return "interface" end
     if self.category == "modules" then return "modules" end
     if self.category == "spdebug" or self.category == "logs" then return "spdebug" end
@@ -1297,8 +1308,10 @@ function SP.UIPlumber:SelectFamily(family)
             self.page = "sphere"
         end
     elseif family == "unitframes" then
-        self.category = "moi"
-        self.unitKind.moi = "self"
+        if not UNITFRAME_CATEGORIES[self.category] then
+            self.category = "moi"
+        end
+        self.unitKind[self.category] = "self"
         if self.page == "target" or self.page == "effects" then self.page = "sphere" end
     elseif family == "interface" then
         self.category = "behavior"
@@ -1430,6 +1443,9 @@ function SP.UIPlumber:RefreshAfterChange()
     if SP.Moi and SP.Moi.Refresh then
         pcall(SP.Moi.Refresh, SP.Moi)
     end
+    if SP.TargetUF and SP.TargetUF.Refresh then
+        pcall(SP.TargetUF.Refresh, SP.TargetUF)
+    end
     if SP.ActionBars and SP.ActionBars.Refresh then
         pcall(SP.ActionBars.Refresh, SP.ActionBars)
     end
@@ -1449,6 +1465,9 @@ function SP.UIPlumber:RefreshLive()
     if SP.RefreshAll then SP:RefreshAll() end
     if SP.Moi and SP.Moi.Refresh then
         pcall(SP.Moi.Refresh, SP.Moi, true)
+    end
+    if SP.TargetUF and SP.TargetUF.Refresh then
+        pcall(SP.TargetUF.Refresh, SP.TargetUF)
     end
     if SP.ActionBars and SP.ActionBars.UpdateAllButtons then
         pcall(SP.ActionBars.UpdateAllButtons, SP.ActionBars)
@@ -1952,8 +1971,8 @@ function SP.UIPlumber:ToggleUnitMenu()
     if family == "unitframes" then
         list = {
             {kind="self", label="Moi", category="moi", enabled=true},
-            {kind="target", label="Cible", category="target_unitframe", enabled=false},
-            {kind="targettarget", label="Cible de la cible", category="targettarget_unitframe", enabled=false},
+            {kind="target", label="Cible", category="target_unitframe", enabled=true},
+            {kind="targettarget", label="Cible de la cible", category="targettarget_unitframe", enabled=true},
         }
     else
         list = UNIT_BY_CATEGORY[self.category] or UNIT_BY_CATEGORY.enemy
@@ -2296,6 +2315,9 @@ function SP.UIPlumber:BuildSettings()
             if SP.db then SP.db[k] = v end
             if SP.Moi and SP.Moi.Refresh then
                 pcall(SP.Moi.Refresh, SP.Moi)
+            end
+            if SP.TargetUF and SP.TargetUF.Refresh then
+                pcall(SP.TargetUF.Refresh, SP.TargetUF)
             end
             if SP.ActionBars and SP.ActionBars.Refresh then
                 pcall(SP.ActionBars.Refresh, SP.ActionBars)
@@ -3810,7 +3832,28 @@ function SP.UIPlumber:BuildSettings()
             end, 2)
         end
     elseif self.page == "position" then
-        if self:GetUType() == "PLAYER_SELF" then
+        local posUType = self:GetUType()
+        if posUType == "TARGET" or posUType == "TARGET_TARGET" then
+            local isTot = posUType == "TARGET_TARGET"
+            local kX, kY = isTot and "tuf_tot_x" or "tuf_target_x", isTot and "tuf_tot_y" or "tuf_target_y"
+            local kScale  = isTot and "tuf_tot_scale" or "tuf_target_scale"
+            local kLocked = isTot and "tuf_tot_locked" or "tuf_target_locked"
+            local kOn     = isTot and "tuf_tot_enabled" or "tuf_target_enabled"
+            section(isTot and "Position Cible de cible" or "Position Cible", "tufPosition", function()
+                add(CreateCheck(c, "Activer cette UnitFrame", getDB(kOn, true), setDB(kOn)), 34, 28)
+                add(CreateSlider(c, "Position X", -900, 900, 1, getDB(kX, isTot and 470 or 280), setDB(kX)), 34, 48)
+                add(CreateSlider(c, "Position Y", -600, 600, 1, getDB(kY, isTot and -120 or -170), setDB(kY)), 34, 48)
+                add(CreateSlider(c, "Echelle", 0.50, 2.00, 0.05, getDB(kScale, 1.0), setDB(kScale)), 34, 48)
+                add(CreateCheck(c, "Verrouiller position", getDB(kLocked, false), setDB(kLocked)), 34, 28)
+                add(CreateCheck(c, "Masquer cadres cible Blizzard", getDB("tuf_hide_blizzard_target", true), setDB("tuf_hide_blizzard_target")), 34, 28)
+            end, 1)
+            section("Placement interne", "tufInnerPosition", function()
+                add(CreateSlider(c, "Decalage orbe X", -200, 200, 1, get("offsetX", 0), set("offsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage orbe Y", -200, 200, 1, get("offsetY", 0), set("offsetY")), 34, 48)
+                add(CreateSlider(c, "Decalage nom X", -80, 80, 1, get("nameOffsetX", 0), set("nameOffsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage nom Y", -80, 80, 1, get("nameOffsetY", 6), set("nameOffsetY")), 34, 48)
+            end, 2)
+        elseif posUType == "PLAYER_SELF" then
             section("Position Moi", "moiPosition", function()
                 add(CreateSlider(c, "Position X", -900, 900, 1, getDB("moi_x", -280), setDB("moi_x")), 34, 48)
                 add(CreateSlider(c, "Position Y", -600, 600, 1, getDB("moi_y", -170), setDB("moi_y")), 34, 48)
@@ -4027,8 +4070,20 @@ function SP.UIPlumber:RefreshHeader()
             win.contextAlt:SetText(self.category == "neutral" and "PNJ uniquement" or (entry.kind == "player" and "PNJ" or "Joueurs"))
         end
     elseif family == "unitframes" then
-        if win.contextButton and win.contextButton.label then win.contextButton.label:SetText("Moi") end
-        if win.contextAlt then win.contextAlt:SetText("Cible / Cible de la cible bientot") end
+        if win.contextButton and win.contextButton.label then
+            win.contextButton.label:SetText(entry.label or "Moi")
+        end
+        if win.contextAlt then
+            local alts = {}
+            for _, item in ipairs({
+                {cat="moi", label="Moi"},
+                {cat="target_unitframe", label="Cible"},
+                {cat="targettarget_unitframe", label="Cible de cible"},
+            }) do
+                if item.cat ~= self.category then alts[#alts + 1] = item.label end
+            end
+            win.contextAlt:SetText(table.concat(alts, " / "))
+        end
     end
 
     local function pageAllowed(key)
@@ -4036,6 +4091,15 @@ function SP.UIPlumber:RefreshHeader()
             return key == "sphere" or key == "text" or key == "life" or key == "castbar"
                 or key == "auras" or key == "target" or key == "effects" or key == "position"
         elseif family == "unitframes" then
+            local utype = self:GetUType()
+            if utype == "TARGET" then
+                -- Cible épurée (DEC-019) : pas de ressources/comportement/barres
+                return key == "sphere" or key == "text" or key == "life"
+                    or key == "castbar" or key == "auras" or key == "position"
+            elseif utype == "TARGET_TARGET" then
+                -- Cible de cible compacte : encore plus court
+                return key == "sphere" or key == "text" or key == "life" or key == "position"
+            end
             return key == "sphere" or key == "text" or key == "life" or key == "resources"
                 or key == "castbar" or key == "auras" or key == "moi_behavior"
                 or key == "position" or key == "actionbars"

@@ -35,7 +35,7 @@ local ADDON = "SphereNameplates"
 local SP    = {}
 _G[ADDON]   = SP
 
-SP.Version = "9.1.0"
+SP.Version = "9.2.0"
 SP.MEDIA   = "Interface\\AddOns\\SphereNameplates\\media\\"
 SP.MEDIA2  = "Interface\\AddOns\\SphereNameplates\\media2\\"
 SP.ASSETS  = "Interface\\AddOns\\SphereNameplates\\media2\\Assets\\"
@@ -182,6 +182,8 @@ end
 
 SP.Plates      = {}   -- [unit] = data
 SP.ActiveUnits = {}   -- [unit] = unitType
+SP.UnitFrames  = {}   -- [unit token fixe] = data, hors nameplates (Moi, futur focus/pet)
+SP.ActiveOrbData = {} -- rendu commun Orb.AnimTick: nameplates + unitframes fixes
 SP.InCombat    = false
 SP.Initialized = false
 SP._isRefreshing = false  -- flag anti-flash lors des refreshs
@@ -440,6 +442,66 @@ function SP:UntaintNum(v)
 end
 
 -------------------------------------------------------------------------------
+--  Safe Unit API wrappers
+--
+--  WoW Midnight can expose secret values through ordinary Unit* calls. Keep all
+--  comparisons and table keys behind pcall/canaccessvalue-friendly checks.
+-------------------------------------------------------------------------------
+function SP:SafeUnitIsUnit(unit, other)
+    if not (unit and other and UnitIsUnit) then return false end
+    local ok, same = pcall(UnitIsUnit, unit, other)
+    return ok and same == true
+end
+
+function SP:SafeUnitIsPlayer(unit)
+    if not (unit and UnitIsPlayer) then return false end
+    local ok, isPlayer = pcall(UnitIsPlayer, unit)
+    return ok and isPlayer == true
+end
+
+function SP:SafeUnitIsPVP(unit)
+    if not (unit and UnitIsPVP) then return false end
+    local ok, isPVP = pcall(UnitIsPVP, unit)
+    return ok and isPVP == true
+end
+
+function SP:SafeUnitReaction(unitA, unitB)
+    if not (unitA and unitB and UnitReaction) then return nil end
+    local ok, reaction = pcall(UnitReaction, unitA, unitB)
+    if ok then return SP:UntaintNum(reaction) end
+    return nil
+end
+
+function SP:SafeUnitLevel(unit)
+    if not (unit and UnitLevel) then return 0 end
+    local ok, level = pcall(UnitLevel, unit)
+    local clean = ok and SP:UntaintNum(level) or nil
+    return clean or 0
+end
+
+function SP:SafeUnitClassification(unit)
+    if not (unit and UnitClassification) then return "" end
+    local ok, classification = pcall(UnitClassification, unit)
+    if ok and type(classification) == "string" then return classification end
+    return ""
+end
+
+function SP:SafeUnitAffectingCombat(unit)
+    if not (unit and UnitAffectingCombat) then return false end
+    local ok, inCombat = pcall(UnitAffectingCombat, unit)
+    return ok and inCombat == true
+end
+
+function SP:SafeUnitGUID(unit)
+    if not (unit and UnitGUID) then return nil end
+    local ok, guid = pcall(UnitGUID, unit)
+    if not ok or type(guid) ~= "string" then return nil end
+    local okCmp, notEmpty = pcall(function() return guid ~= "" end)
+    if okCmp and notEmpty then return guid end
+    return nil
+end
+
+-------------------------------------------------------------------------------
 --  TEXTE / COULEUR HP
 --
 --  Separation stricte :
@@ -619,10 +681,11 @@ local function _GetDynamicHPTextColorFromRatio(cfg, kind, ratio)
     if not okBucket then idx = 1 end
 
     local prefix = (kind == "absolute") and "hp_abs_col" or "hp_col"
+    local alphaKey = (kind == "absolute") and "hpAbsoluteTextA" or "hpPercentTextA"
     return _HPClampColor(cfg[prefix .. idx .. "_r"], 1),
            _HPClampColor(cfg[prefix .. idx .. "_g"], 1),
            _HPClampColor(cfg[prefix .. idx .. "_b"], 1),
-           1,
+           _HPClampColor(cfg[alphaKey], 1),
            idx
 end
 
@@ -740,7 +803,10 @@ function SP:GetHPTextColor(data, unit, kind)
     -- UnitHealthPercent en Lua. Seule voie acceptee ici: une curve compatible
     -- retour couleur. Si absente, fallback fixe explicite et stable.
     local r, g, b, a, source, reason = _TryHPTextColorCurve(SP, cfg, unit, kind)
-    if source == "curve" then return r, g, b, a, source, reason end
+    if source == "curve" then
+        local alphaKey = (kind == "absolute") and "hpAbsoluteTextA" or "hpPercentTextA"
+        return r, g, b, _HPClampColor(cfg[alphaKey], a or 1), source, reason
+    end
 
     local fr, fg, fb, fa = _GetFixedHPTextColor(cfg, kind)
     return fr, fg, fb, fa, "fallback_fixed", tostring(reason or source)
@@ -874,8 +940,7 @@ end
 --  NIVEAU
 -------------------------------------------------------------------------------
 function SP:GetLevelText(unit)
-    if not UnitExists(unit) then return nil end
-    local lvl = UnitLevel(unit) or 0
+    local lvl = SP:SafeUnitLevel(unit)
     if lvl <= 0 then return nil end
     local maxLvl = GetMaxPlayerLevel and GetMaxPlayerLevel() or 80
     if lvl >= maxLvl then return nil end
@@ -893,13 +958,13 @@ end
 function SP:GetUnitType(unit)
     -- WoW Midnight : UnitExists peut retourner false pour les tokens nameplate
     -- alors qu'UnitReaction fonctionne. On n'exige plus UnitExists.
-    local reaction = UnitReaction("player", unit)
-    local isPlayer  = UnitIsPlayer and (UnitIsPlayer(unit) == true)
+    local reaction = SP:SafeUnitReaction("player", unit)
+    local isPlayer = SP:SafeUnitIsPlayer(unit)
 
     if not reaction then
         -- Fallback PvP : réaction inconnue mais unité joueur identifiée
         if isPlayer then
-            local isPVP = UnitIsPVP and UnitIsPVP(unit)
+            local isPVP = SP:SafeUnitIsPVP(unit)
             -- En zone PvP (BG/arène), les joueurs sans réaction = ennemis par défaut
             return isPVP and "ENEMY_PLAYER" or "FRIENDLY_PLAYER"
         end
@@ -1083,6 +1148,7 @@ local function U(o)
         fill_color_mode    = "fixed", -- "fixed" | "progressive" | "class" (legacy: "custom")
         fill_saturation    = 1.0,
         fill_alpha         = 0.88,   -- opacité du fill HP
+        orb_hp_fill_alpha  = 0.0,    -- fill HP invisible: le StatusBar pilote seulement le masque/ligne de vie
         fill_prog_highR    = 0.20, fill_prog_highG = 1.00, fill_prog_highB = 0.20, -- 75-100
         fill_prog_midR     = 1.00, fill_prog_midG  = 0.82, fill_prog_midB  = 0.00, -- 50-74
         fill_prog_lowR     = 1.00, fill_prog_lowG  = 0.50, fill_prog_lowB  = 0.00, -- 25-49
@@ -1160,6 +1226,10 @@ local function U(o)
         hpFormat           = "percent",
         levelFont          = "Friz Quadrata TT",
         levelFontSize      = 11,
+        hpTextOffsetX      = 0,
+        hpTextOffsetY      = 0,
+        hpSubTextOffsetX   = 0,
+        hpSubTextOffsetY   = 0,
         hpTextR            = nil,    -- legacy: couleur texte HP/niveau (nil = blanc auto)
         hpTextG            = nil,
         hpTextB            = nil,
@@ -1192,6 +1262,11 @@ local function U(o)
         nameOffsetY        = 6,
         nameOffsetX        = 0,
         name_maxWidth      = 0,      -- largeur max px (0 = auto)
+        name_distance_enabled = false,
+        name_distance_mode    = "limit", -- "limit" | "fade"
+        name_distance_max     = 20,      -- cache le nom au-dela (yards)
+        name_fade_full        = 2,       -- alpha nom max a cette distance
+        name_fade_hidden      = 20,      -- alpha nom 0 au-dela
         show_ilvl          = true,   -- iLvL quand joueur hors combat + HP plein (≥ 98%)
         -- Mode couleur du nom : "fixed" | "progressive" | "class"
         -- "class" n'est pertinent que pour les joueurs (PNJ → fallback "fixed")
@@ -1364,6 +1439,7 @@ local function U(o)
         castbar_text_colorG    = 0.88,
         castbar_text_colorB    = 0.45,
         castbar_text_font      = "Friz Quadrata TT",
+        castbar_time_offset_y  = 0,
         castbar_text_mode      = "separate", -- "separate" | "replace_name"
         -- Couleurs personnalisées (utilisées si castbar_color_by_class = false ou caster non-joueur)
         castbar_color_cast     = {1.00, 0.65, 0.00},  -- interruptible (orange)
@@ -1405,6 +1481,14 @@ local function U(o)
         quest_enabled      = true,
         quest_sound        = false,  -- son à l'apparition d'un PNJ de quête
         quest_color_name   = true,   -- nom en bleu pour les PNJ de quête
+        quest_proximity_sound = false,
+        quest_proximity_sound_distance = 30,
+        quest_proximity_sound_cooldown = 12,
+        quest_proximity_sound_unit_cooldown = 75,
+        quest_proximity_sound_in_combat = false,
+        quest_proximity_sound_enemies_only = true,
+        quest_proximity_sound_active_only = true,
+        quest_proximity_sound_id = "quest_item",
         raidmark_enabled   = true,
         -- Ombre circulaire (indépendante du style décoratif)
         shadeCircleEnabled = false,
@@ -1414,6 +1498,12 @@ local function U(o)
         bgG                = 0.0,
         bgB                = 0.0,
         bgAlpha            = 0.75,           -- 1.0 → 0.75 (Codex 2026-04-30: rendu trop noir)
+        orb_empty_clear_enabled = true,      -- coupe le fond/FX internes dans la portion vide
+        orb_empty_shade_enabled = false,     -- optionnel: voile de couleur sur la portion vide
+        orb_empty_shadeR  = 0.0,
+        orb_empty_shadeG  = 0.0,
+        orb_empty_shadeB  = 0.0,
+        orb_empty_shade_alpha = 0.0,
         -- Ombres internes (configurables, étaient hardcodées 0.62 / 0.50)
         orb_shadow_alpha   = 0.35,           -- ancien hardcode 0.62 → 0.35 (lisibilité)
         orb_shadow2_alpha  = 0.0,            -- 0.50 → 0.0 (texture orb-innershadow-v2 absente du dossier media)
@@ -1443,6 +1533,43 @@ SP.DEFAULTS = { profile = {
     boss_elite_frame_enabled = true,
     boss_elite_frame_scale   = 1.85,
     boss_elite_frame_alpha   = 1.00,
+
+    -- Sphère joueur fixe ("Moi") : UnitFrame personnelle hors nameplates
+    moi_enabled              = false,
+    moi_display_mode         = "always", -- "always" | "combat"
+    moi_locked               = false,
+    moi_x                    = -280,
+    moi_y                    = -170,
+    moi_scale                = 1.0,
+    moi_hide_blizzard_player = true,
+    moi_hide_blizzard_migrated = 0,
+    snp_edit_mode            = false,
+
+    -- Barres d'actions personnelles (Moi > Barres). Desactivees par defaut,
+    -- mais quand elles sont activees elles remplacent les barres Blizzard.
+    actionbars = {
+        enabled = false,
+        hideBlizzard = true, -- legacy alias
+        replaceBlizzard = true,
+        lock = true,
+        selected = 1,
+        editGrid = true,
+        editSnap = true,
+        editGridSize = 16,
+        primaryPairAnchor = true,
+        primaryPairGap = 28,
+        primaryPairYOffset = 0,
+        bars = {
+            [1] = { enabled=true,  buttons=12, firstSlot=1,   followPaging=true,  orientation="horizontal", columns=12, size=36, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="always", x=-220, y=-300, anchorMode="moi_left", showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [2] = { enabled=false, buttons=12, firstSlot=13,  followPaging=false, orientation="horizontal", columns=12, size=36, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="always", x=-220, y=-344, showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [3] = { enabled=false, buttons=12, firstSlot=25,  followPaging=false, orientation="vertical",   columns=1,  size=36, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="always", x=430,  y=-120, showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [4] = { enabled=false, buttons=12, firstSlot=37,  followPaging=false, orientation="vertical",   columns=1,  size=36, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="always", x=476,  y=-120, showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [5] = { enabled=false, buttons=12, firstSlot=49,  followPaging=false, orientation="grid",       columns=6,  size=34, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="combat_target", x=-160, y=-390, showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [6] = { enabled=false, buttons=12, firstSlot=61,  followPaging=false, orientation="grid",       columns=6,  size=34, spacing=4, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="combat_target", x=160,  y=-390, anchorMode="moi_right", showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [7] = { enabled=false, buttons=12, firstSlot=73,  followPaging=false, orientation="horizontal", columns=12, size=32, spacing=3, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="mouseover", x=-220, y=220,  showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+            [8] = { enabled=false, buttons=12, firstSlot=85,  followPaging=false, orientation="horizontal", columns=12, size=32, spacing=3, scale=1.0, alpha=1.0, inactiveAlpha=0.25, visibility="mouseover", x=-220, y=260,  showEmpty=true, emptyAlpha=0.00, showHotkey=true, showCount=true, showMacro=false, showCooldown=true, clickOnDown=false, hoverScale=1.08 },
+        },
+    },
 
     -- Menu radial joueur (clic droit sur sphere joueur)
     player_menu_enabled        = true,
@@ -1547,6 +1674,7 @@ SP.DEFAULTS = { profile = {
     modules_fade_enabled      = true,
     modules_inspectilvl_enabled = true,
     modules_quest_enabled     = true,
+    modules_moi_enabled       = true,
 
     -- ── Logs internes ─────────────────────────────────────────────────────────
     logs_enabled        = false,
@@ -1559,6 +1687,13 @@ SP.DEFAULTS = { profile = {
     logs_persist        = false,
 
     -- ── Performance Monitor ───────────────────────────────────────────────────
+    spdebug_enabled     = true,
+    spdebug_fps_enabled = true,
+    spdebug_memory_enabled = true,
+    spdebug_refresh_sec = 0.5,
+    spdebug_alert_throttle = 3.0,
+    spdebug_log_filter_level = "ALL",
+    spdebug_log_filter_module = "ALL",
     perf_enabled        = false,
     perf_seuil_ms       = 5.0,
     perf_panel_visible  = false,
@@ -1619,6 +1754,46 @@ SP.DEFAULTS = { profile = {
         raidmark_enabled=true,
         orb_wave=false,
     }),
+    PLAYER_SELF = U({
+        size=74, fillR=0.80, fillG=0.10, fillB=0.10,
+        borderR=0.92, borderG=0.72, borderB=0.16, borderWidth=6,
+        borderColorMode="classe", borderClassColor=true,
+        classColorSphere=true, classColorName=true,
+        name_color_mode="class",
+        showName=true, nameDisplay="above", showSubTitle=false,
+        showLevelOrHP=true, showHPAlsoInOrb=true, hpFormat="both",
+        hp_percent_color_mode="dynamic", hp_absolute_color_mode="fixed",
+        show_hp_under_maxlvl=true, show_ilvl=false,
+        showPower=true, powerOffsetY=4,
+        -- Shadow Circle par défaut pour les unitframes : c'est l'anneau de
+        -- classe ET le support visuel de l'anneau ressource (BUG-036).
+        borderStyle="shadowcircle",
+        moi_resource_ring_enabled=true,
+        moi_resource_ring_alpha=0.86,
+        moi_resource_ring_split=true,
+        moi_resource_ring_scale=1.08,
+        moi_resource_ring_min_alpha=0.10,
+        -- "smart" = visible en combat ou pendant ~5s après un sort; "combat" = combat seul; "always" = toujours
+        moi_resource_ring_visibility="smart",
+        moi_behavior_glow_enabled=true,
+        moi_behavior_glow_aggro=true,
+        moi_behavior_glow_cast=true,
+        moi_behavior_glow_lowhp=true,
+        moi_behavior_glow_heal=true,
+        moi_behavior_glow_cc=true,
+        moi_behavior_lowhp_threshold=35,
+        moi_behavior_glow_alpha=0.70,
+        moi_behavior_glow_size=1.80,
+        moi_behavior_glow_cooldown=1.20,
+        auras_enabled=true, auras_debuff=true, auras_buff=true,
+        auras_maxDebuff=5, auras_maxBuff=5,
+        castbar_enabled=true, castbar_mode="collapse_glow",
+        raidmark_enabled=false, quest_enabled=false,
+        showCombatIndicator=false, showEliteDragon=false,
+        target_glow_enabled=false, anchor_enabled=false,
+        sphere_display_mode="always",
+        hp_lerp_speed=10.0,
+    }),
 }}
 
 -------------------------------------------------------------------------------
@@ -1650,7 +1825,7 @@ function SP:GetUnitItemLevel(unit)
         local v = math.floor(ilvl)
         -- Mémoriser dans le cache pour les prochaines lectures
         if SP.Inspect and SP.Inspect.SetCached then
-            local guid = UnitGUID and UnitGUID(unit) or nil
+            local guid = SP.SafeUnitGUID and SP:SafeUnitGUID(unit) or nil
             if guid then SP.Inspect:SetCached(guid, v) end
         end
         return v

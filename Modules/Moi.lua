@@ -81,6 +81,16 @@ function M:EnsureSavedDefaults()
         db.moi_hide_blizzard_player = true
         db.moi_hide_blizzard_migrated = 1
     end
+    -- Migration one-shot : Shadow Circle devient le style de bordure par
+    -- défaut des unitframes (anneau de classe + support de l'anneau
+    -- ressource). Flag posé seulement quand le profil est disponible.
+    if db.moi_shadowcircle_migrated ~= 1 then
+        local cfg = SP.db and SP.db.PLAYER_SELF
+        if cfg then
+            cfg.borderStyle = "shadowcircle"
+            db.moi_shadowcircle_migrated = 1
+        end
+    end
 end
 
 function M:ShouldShow()
@@ -364,8 +374,32 @@ function M:EnsureResourceRing(data)
         holder = holder,
         left = self:CreateResourceHemisphere(holder, "left"),
         right = self:CreateResourceHemisphere(holder, "right"),
+        _targetAlpha = 0,
     }
+    holder:SetAlpha(0)
     holder:Hide()
+end
+
+-- ── Visibilité de l'anneau ressource ────────────────────────────────────────
+-- "smart" (défaut) : combat OU ~5s après un lancement de sort.
+-- "combat" : combat uniquement. "always" : toujours visible.
+local RESOURCE_ACTIVITY_WINDOW = 5.0
+
+function M:MarkResourceActivity()
+    self._resourceActivityUntil = (GetTime and GetTime() or 0) + RESOURCE_ACTIVITY_WINDOW
+end
+
+function M:IsResourceActive(cfg)
+    local mode = (cfg or CFG()).moi_resource_ring_visibility or "smart"
+    if mode == "always" then return true end
+    local inCombat = (SP.InCombat == true)
+        or (UnitAffectingCombat and UnitAffectingCombat(UNIT) == true)
+    if inCombat then return true end
+    if mode == "smart" then
+        local untilT = self._resourceActivityUntil
+        return (untilT and GetTime and GetTime() < untilT) == true
+    end
+    return false
 end
 
 function M:LayoutResourceRing(data)
@@ -436,12 +470,16 @@ function M:UpdateResourceRing()
     if not ring then return end
     local cfg = CFG()
     if cfg.moi_resource_ring_enabled == false or cfg.borderStyle ~= "shadowcircle" or not self:ShouldShow() then
+        ring._targetAlpha = 0
+        ring.holder:SetAlpha(0)
         ring.holder:Hide()
         return
     end
 
     local ptype, primaryRatio = self:GetPrimaryPower()
     if not ptype then
+        ring._targetAlpha = 0
+        ring.holder:SetAlpha(0)
         ring.holder:Hide()
         return
     end
@@ -462,7 +500,14 @@ function M:UpdateResourceRing()
         self:SetHemisphereValue(ring.left, primaryRatio, pr, pg, pb, math.max(minAlpha, alpha))
         self:SetHemisphereValue(ring.right, primaryRatio, pr, pg, pb, math.max(minAlpha, alpha))
     end
-    ring.holder:Show()
+
+    -- Visibilité par fondu : la cible d'alpha est lissée dans TickBehavior.
+    ring._targetAlpha = self:IsResourceActive(cfg) and 1 or 0
+    if ring._targetAlpha > 0 or (ring.holder:GetAlpha() or 0) > 0.02 then
+        ring.holder:Show()
+    else
+        ring.holder:Hide()
+    end
 end
 
 function M:UpdateClassPower()
@@ -529,6 +574,21 @@ end
 function M:TickBehavior(now)
     local data = self.data
     if not data then return end
+
+    -- Fondu de l'anneau ressource (60 FPS) — avant le early-return du pulse
+    local ring = data.moiResourceRing
+    if ring and ring.holder and ring.holder:IsShown() then
+        local target = ring._targetAlpha or 0
+        local cur = ring.holder:GetAlpha() or 0
+        local diff = target - cur
+        if math.abs(diff) > 0.01 then
+            ring.holder:SetAlpha(cur + diff * 0.10)
+        else
+            ring.holder:SetAlpha(target)
+            if target == 0 then ring.holder:Hide() end
+        end
+    end
+
     local pulse = data._moiBehaviorPulse
     local glow = data.moiBehaviorGlow
     if not (pulse and glow) then return end
@@ -752,6 +812,7 @@ function M:EnsureEventFrame()
         "UNIT_AURA",
         "UNIT_SPELLCAST_START",
         "UNIT_SPELLCAST_CHANNEL_START",
+        "UNIT_SPELLCAST_SUCCEEDED",
     }
     for _, ev in ipairs(unitEvents) do
         local ok = pcall(f.RegisterUnitEvent, f, ev, UNIT)
@@ -799,6 +860,11 @@ function M:EnsureEventFrame()
             -- en fin de handler les réapplique maintenant que c'est permis.
             M._pendingAnchor = nil
             M._pendingSecureButton = nil
+        end
+        if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
+            or event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- Lancement de sort = fenêtre d'activité de l'anneau ressource (mode smart)
+            M:MarkResourceActivity()
         end
         if (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START")
             and CFG().moi_behavior_glow_cast ~= false then

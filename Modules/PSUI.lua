@@ -100,12 +100,15 @@ _castPreviewTicker:SetScript("OnUpdate", function(_, elapsed)
 end)
 
 local TEX = "Interface/AddOns/Plumber/Art/ExpansionLandingPage/ExpansionBorder_TWW"
+local PSUI_TEX = "Interface\\AddOns\\SphereNameplates\\media2\\PSUI\\"
 local BG_ATLAS = "thewarwithin-landingpage-background"
 local SCROLL_TEX = "Interface/AddOns/Plumber/Art/ControlCenter/SettingsPanelWidget.png"
 local GOLD = {1.0, 0.82, 0.0}
 local WHITE = {1.0, 1.0, 1.0}
 local MUTED = {0.72, 0.66, 0.56}
-local COLUMN_WIDTH = 370
+local BRONZE = {0.95, 0.50, 0.16}
+local FEL = {0.42, 1.0, 0.66}
+local COLUMN_WIDTH = 330
 local COLUMN_GAP = 34
 
 local function SafeCall(fn, ...)
@@ -133,6 +136,7 @@ local CATEGORY = {
     {key="behavior", label="Options"},
     {key="modules",  label="Modules"},
     {key="logs",     label="Logs"},
+    {key="spdebug",  label="SPDebug"},
 }
 
 local UNIT_BY_CATEGORY = {
@@ -147,15 +151,68 @@ local UNIT_BY_CATEGORY = {
         {kind="npc",    label="PNJ",    utype="FRIENDLY",     title="PNJ allie"},
         {kind="player", label="Joueur", utype="FRIENDLY_PLAYER", title="Joueur allie"},
     },
+    moi = {
+        {kind="self",   label="Moi",    utype="PLAYER_SELF",  title="Moi"},
+    },
 }
 
 local PAGES = {
     {key="sphere",  label="Sphere"},
-    {key="text",    label="Nom"},
-    {key="castbar", label="CastBar"},
+    {key="text",    label="Texte"},
+    {key="life",    label="Vie"},
+    {key="castbar", label="Cast"},
     {key="auras",   label="Auras"},
-    {key="target",  label="Cible"},
+    {key="target",  label="Ciblage"},
     {key="effects", label="Effets"},
+    {key="resources", label="Ressources"},
+    {key="moi_behavior", label="Comportement"},
+    {key="position", label="Position"},
+    {key="actionbars", label="Barres d'actions"},
+}
+
+local MAIN_NAV = {
+    {key="nameplates", label="Nameplates"},
+    {key="unitframes", label="UnitFrames"},
+    {key="interface", label="Interface"},
+    {key="modules", label="Modules"},
+    {key="spdebug", label="SPDebug"},
+}
+
+local SPDEBUG_NAV = {
+    {key="overview", label="Vue globale"},
+    {key="modules", label="Modules"},
+    {key="logs", label="Logs"},
+    {key="events", label="Evenements"},
+    {key="options", label="Options"},
+}
+
+local SIDE_ICONS = {
+    sphere = {texture=PSUI_TEX .. "icon_sphere.png"},
+    text = {texture=PSUI_TEX .. "icon_text.png"},
+    life = {texture=PSUI_TEX .. "icon_life.png"},
+    castbar = {texture=PSUI_TEX .. "icon_cast.png"},
+    auras = {texture=PSUI_TEX .. "icon_auras.png"},
+    target = {texture=PSUI_TEX .. "icon_target.png"},
+    effects = {texture=PSUI_TEX .. "icon_effects.png"},
+    resources = {texture=PSUI_TEX .. "icon_resources.png"},
+    moi_behavior = {texture=PSUI_TEX .. "icon_behavior.png"},
+    position = {texture=PSUI_TEX .. "icon_position.png"},
+    actionbars = {texture=PSUI_TEX .. "icon_actionbars.png"},
+}
+
+local SPDEBUG_ICONS = {
+    overview = {texture=PSUI_TEX .. "icon_interface.png"},
+    modules = {texture=PSUI_TEX .. "icon_modules.png"},
+    logs = {texture=PSUI_TEX .. "icon_logs.png"},
+    events = {texture=PSUI_TEX .. "icon_events.png"},
+    options = {texture=PSUI_TEX .. "icon_options.png"},
+}
+
+local OPTIONS_ICONS = {
+    general = {texture=PSUI_TEX .. "icon_interface.png"},
+    markers = {texture=PSUI_TEX .. "icon_target.png"},
+    playerMenu = {texture=PSUI_TEX .. "icon_sphere.png"},
+    pack = {texture=PSUI_TEX .. "icon_modules.png"},
 }
 
 local OPTIONS_NAV = {
@@ -169,12 +226,13 @@ local COPY_GROUPS = {
     sphere = {
         exact = {
             "enabled", "sphere_display_mode", "size", "offsetX", "offsetY", "hp_lerp_speed",
-            "classColorSphere", "fill_color_mode", "fillR", "fillG", "fillB", "fill_alpha", "fill_saturation",
+            "classColorSphere", "fill_color_mode", "fillR", "fillG", "fillB", "fill_alpha", "orb_hp_fill_alpha", "fill_saturation",
             "fill_prog_highR", "fill_prog_highG", "fill_prog_highB",
             "fill_prog_midR", "fill_prog_midG", "fill_prog_midB",
             "fill_prog_lowR", "fill_prog_lowG", "fill_prog_lowB",
             "fill_prog_critR", "fill_prog_critG", "fill_prog_critB",
             "bgR", "bgG", "bgB", "bgAlpha",
+            "orb_empty_clear_enabled", "orb_empty_shade_enabled", "orb_empty_shadeR", "orb_empty_shadeG", "orb_empty_shadeB", "orb_empty_shade_alpha",
             "borderEnabled", "borderColorMode", "borderClassColor", "borderR", "borderG", "borderB",
             "borderWidth", "borderStyle", "borderOverlayScale", "border_glow_pulse",
             "border_threat_color", "shadeCircleEnabled", "shadeCircleAlpha",
@@ -200,8 +258,11 @@ local COPY_GROUPS = {
             "name_prog_critR", "name_prog_critG",  "name_prog_critB",
             "classColorName", "nameR", "nameG", "nameB", "nameFont", "nameFontSize",
             "nameOffsetX", "nameOffsetY", "name_maxWidth",
+            "name_distance_enabled", "name_distance_mode", "name_distance_max",
+            "name_fade_full", "name_fade_hidden",
             "showLevelOrHP", "show_ilvl", "show_hp_under_maxlvl", "showHPAlsoInOrb", "hpFormat",
             "hp_show_percent", "levelFont", "levelFontSize", "hp_color_dynamic",
+            "hpTextOffsetX", "hpTextOffsetY", "hpSubTextOffsetX", "hpSubTextOffsetY",
             "hp_percent_color_mode", "hp_absolute_color_mode",
             "hpTextR", "hpTextG", "hpTextB",
             "hpPercentTextA", "hpAbsoluteTextA",
@@ -214,6 +275,22 @@ local COPY_GROUPS = {
             "showSubTitle", "showGuild", "showHonor",
         },
     },
+    life = {
+        exact = {
+            "showLevelOrHP", "show_ilvl", "show_hp_under_maxlvl", "showHPAlsoInOrb", "hpFormat",
+            "hp_show_percent", "levelFont", "levelFontSize", "hp_color_dynamic",
+            "hpTextOffsetX", "hpTextOffsetY", "hpSubTextOffsetX", "hpSubTextOffsetY",
+            "hp_percent_color_mode", "hp_absolute_color_mode",
+            "hpTextR", "hpTextG", "hpTextB",
+            "hpPercentTextA", "hpAbsoluteTextA",
+            "hp_col1_r", "hp_col1_g", "hp_col1_b", "hp_col2_r", "hp_col2_g", "hp_col2_b",
+            "hp_col3_r", "hp_col3_g", "hp_col3_b", "hp_col4_r", "hp_col4_g", "hp_col4_b",
+            "hp_abs_col1_r", "hp_abs_col1_g", "hp_abs_col1_b", "hp_abs_col2_r", "hp_abs_col2_g", "hp_abs_col2_b",
+            "hp_abs_col3_r", "hp_abs_col3_g", "hp_abs_col3_b", "hp_abs_col4_r", "hp_abs_col4_g", "hp_abs_col4_b",
+            "hpPercentTextR", "hpPercentTextG", "hpPercentTextB",
+            "hpAbsoluteTextR", "hpAbsoluteTextG", "hpAbsoluteTextB",
+        },
+    },
     effects = {
         exact = {
             "orb_galaxies", "orb_galaxy_alpha", "orb_midnight_star", "orb_midnight_star_alpha",
@@ -222,7 +299,11 @@ local COPY_GROUPS = {
             "orb_shimmer_alpha", "orb_wave", "orb_wave_alpha",
             "orb_wave_speed", "orb_gloss", "orb_gloss_alpha", "orb_spark", "orb_lowhp_glow",
             "anchor_enabled", "anchor_alpha", "showEliteDragon", "quest_enabled", "quest_color_name",
-            "quest_sound", "raidmark_enabled", "showCombatIndicator", "npcIconsEnabled",
+            "quest_sound", "quest_proximity_sound", "quest_proximity_sound_distance",
+            "quest_proximity_sound_cooldown", "quest_proximity_sound_unit_cooldown",
+            "quest_proximity_sound_in_combat", "quest_proximity_sound_enemies_only",
+            "quest_proximity_sound_active_only", "quest_proximity_sound_id",
+            "raidmark_enabled", "showCombatIndicator", "npcIconsEnabled",
             "cc_effect_enabled", "showPower", "powerOffsetY", "fade_enabled", "fade_start",
             "fade_end", "fade_min_alpha",
         },
@@ -275,7 +356,7 @@ end
 local function Text(parent, text, size, color)
     local fs = parent:CreateFontString(nil, "OVERLAY")
     SetFont(fs, size or 13)
-    fs:SetText(text or "")
+    fs:SetText(text ~= nil and tostring(text) or "")
     local c = color or WHITE
     fs:SetTextColor(c[1], c[2], c[3], 1)
     return fs
@@ -375,19 +456,211 @@ local function CreateTextTab(parent, label, onClick, normalColor)
     local b = CreateFrame("Button", nil, parent)
     b:SetSize(110, 32)
     b.normalColor = normalColor or GOLD
-    b.label = Text(b, label, 18, b.normalColor)
+    b.label = Text(b, string.upper(label or ""), 16, b.normalColor)
     b.label:SetPoint("CENTER")
+    b.underline = b:CreateTexture(nil, "ARTWORK")
+    b.underline:SetHeight(2)
+    b.underline:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 16, 1)
+    b.underline:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -16, 1)
+    b.underline:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.underline:SetVertexColor(1.0, 0.55, 0.08, 0)
+    b.spark = b:CreateTexture(nil, "OVERLAY")
+    b.spark:SetSize(9, 9)
+    b.spark:SetPoint("BOTTOM", b.underline, "CENTER", 0, -3)
+    b.spark:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.spark:SetVertexColor(1.0, 0.82, 0.18, 0)
     b:SetScript("OnClick", onClick)
-    b:SetScript("OnEnter", function(self) self.label:SetTextColor(1, 1, 1, 1) end)
+    b:SetScript("OnEnter", function(self)
+        self.label:SetTextColor(1, 1, 1, 1)
+        if not self.selected then
+            self.underline:SetVertexColor(1.0, 0.55, 0.08, 0.28)
+        end
+    end)
     b:SetScript("OnLeave", function(self)
-        if self.selected then self.label:SetTextColor(1, 1, 1, 1)
-        else self.label:SetTextColor(self.normalColor[1], self.normalColor[2], self.normalColor[3], 1) end
+        self:SetSelected(self.selected)
     end)
     function b:SetSelected(state)
         self.selected = state
-        if state then self.label:SetTextColor(1, 1, 1, 1)
-        else self.label:SetTextColor(self.normalColor[1], self.normalColor[2], self.normalColor[3], 1) end
+        if state then
+            self.label:SetTextColor(1, 1, 1, 1)
+            self.underline:SetVertexColor(1.0, 0.55, 0.08, 0.80)
+            self.spark:SetVertexColor(1.0, 0.82, 0.18, 0.92)
+        else
+            self.label:SetTextColor(self.normalColor[1], self.normalColor[2], self.normalColor[3], 1)
+            self.underline:SetVertexColor(1.0, 0.55, 0.08, 0)
+            self.spark:SetVertexColor(1.0, 0.82, 0.18, 0)
+        end
     end
+    b:SetSelected(false)
+    return b
+end
+
+local function CreateSideNavButton(parent, label, iconDef, onClick)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(292, 48)
+    if parent and parent.GetFrameLevel then
+        pcall(b.SetFrameLevel, b, parent:GetFrameLevel() + 2)
+    end
+
+    b.skin = b:CreateTexture(nil, "BACKGROUND")
+    b.skin:SetAllPoints()
+    SafeTexture(b.skin, PSUI_TEX .. "psui_nav_button_normal.png")
+
+    b.skinSelected = b:CreateTexture(nil, "BORDER")
+    b.skinSelected:SetAllPoints()
+    SafeTexture(b.skinSelected, PSUI_TEX .. "psui_nav_button_selected.png")
+    b.skinSelected:SetAlpha(0)
+
+    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    b.bg:SetPoint("TOPLEFT", b, "TOPLEFT", 42, -3)
+    b.bg:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4, 3)
+    b.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.bg:SetVertexColor(0.030, 0.024, 0.018, 0)
+
+    b.leftCap = b:CreateTexture(nil, "BACKGROUND")
+    b.leftCap:SetSize(46, 46)
+    b.leftCap:SetPoint("LEFT", b, "LEFT", 0, 0)
+    b.leftCap:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.leftCap:SetVertexColor(0.030, 0.024, 0.018, 0)
+
+    b.borderTop = b:CreateTexture(nil, "ARTWORK")
+    b.borderTop:SetHeight(1)
+    b.borderTop:SetPoint("TOPLEFT", b.bg, "TOPLEFT", 0, 0)
+    b.borderTop:SetPoint("TOPRIGHT", b.bg, "TOPRIGHT", 0, 0)
+    b.borderTop:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.borderTop:SetVertexColor(0.46, 0.31, 0.15, 0)
+
+    b.borderBottom = b:CreateTexture(nil, "ARTWORK")
+    b.borderBottom:SetHeight(1)
+    b.borderBottom:SetPoint("BOTTOMLEFT", b.bg, "BOTTOMLEFT", 0, 0)
+    b.borderBottom:SetPoint("BOTTOMRIGHT", b.bg, "BOTTOMRIGHT", 0, 0)
+    b.borderBottom:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.borderBottom:SetVertexColor(0.20, 0.13, 0.07, 0)
+
+    b.borderRight = b:CreateTexture(nil, "ARTWORK")
+    b.borderRight:SetWidth(1)
+    b.borderRight:SetPoint("TOPRIGHT", b.bg, "TOPRIGHT", 0, 0)
+    b.borderRight:SetPoint("BOTTOMRIGHT", b.bg, "BOTTOMRIGHT", 0, 0)
+    b.borderRight:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.borderRight:SetVertexColor(0.32, 0.20, 0.10, 0)
+
+    b.accent = b:CreateTexture(nil, "ARTWORK")
+    b.accent:SetSize(3, 36)
+    b.accent:SetPoint("LEFT", b.bg, "LEFT", 0, 0)
+    b.accent:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.accent:SetVertexColor(0.95, 0.58, 0.18, 0)
+
+    b.iconBox = b:CreateTexture(nil, "ARTWORK")
+    b.iconBox:SetSize(52, 52)
+    b.iconBox:SetPoint("LEFT", b, "LEFT", -2, 0)
+    SafeTexture(b.iconBox, PSUI_TEX .. "psui_icon_frame.png")
+    b.iconBox:SetVertexColor(1, 1, 1, 1)
+
+    b.iconBoxSelected = b:CreateTexture(nil, "ARTWORK")
+    b.iconBoxSelected:SetSize(52, 52)
+    b.iconBoxSelected:SetPoint("LEFT", b, "LEFT", -2, 0)
+    SafeTexture(b.iconBoxSelected, PSUI_TEX .. "psui_icon_frame_selected.png")
+    b.iconBoxSelected:SetAlpha(0)
+
+    b.iconTex = b:CreateTexture(nil, "OVERLAY")
+    b.iconTex:SetSize(36, 36)
+    b.iconTex:SetPoint("LEFT", b, "LEFT", 6, 0)
+    b.iconTex:SetTexCoord(0, 1, 0, 1)
+    local texture = type(iconDef) == "table" and iconDef.texture or nil
+    if texture then
+        SafeTexture(b.iconTex, texture)
+    else
+        b.iconTex:SetTexture("Interface\\Buttons\\WHITE8x8")
+        b.iconTex:SetVertexColor(0.18, 0.11, 0.04, 0.72)
+    end
+
+    local glyph = ""
+    if type(iconDef) == "table" then
+        glyph = iconDef.text or ""
+    else
+        glyph = iconDef or ""
+    end
+    b.icon = Text(b, glyph or "", 13, GOLD)
+    b.icon:SetPoint("LEFT", b, "LEFT", 31, -14)
+    b.icon:SetShadowOffset(1, -1)
+    b.icon:SetAlpha(glyph and glyph ~= "" and 1 or 0)
+
+    b.label = Text(b, label, 14, GOLD)
+    b.label:SetPoint("LEFT", b, "LEFT", 64, 0)
+    b.label:SetJustifyH("LEFT")
+
+    b.hl = b:CreateTexture(nil, "OVERLAY")
+    b.hl:SetPoint("TOPLEFT", b.bg, "TOPLEFT", 0, 0)
+    b.hl:SetPoint("BOTTOMRIGHT", b.bg, "BOTTOMRIGHT", 0, 0)
+    b.hl:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.hl:SetVertexColor(0.90, 0.50, 0.14, 0)
+
+    b.topLine = b:CreateTexture(nil, "OVERLAY")
+    b.topLine:SetHeight(1)
+    b.topLine:SetPoint("TOPLEFT", b.bg, "TOPLEFT", 8, -3)
+    b.topLine:SetPoint("TOPRIGHT", b.bg, "TOPRIGHT", -10, -3)
+    b.topLine:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.topLine:SetVertexColor(0.92, 0.60, 0.24, 0.10)
+
+    b.pin = b:CreateTexture(nil, "OVERLAY")
+    b.pin:SetSize(8, 8)
+    b.pin:SetPoint("RIGHT", b, "RIGHT", -14, 0)
+    b.pin:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b.pin:SetVertexColor(1.0, 0.82, 0.25, 0)
+
+    function b:SetSelected(state)
+        self.selected = state
+        local a = state and 0.20 or 0
+        self.hl:SetVertexColor(0.90, 0.50, 0.14, a)
+        self.skinSelected:SetAlpha(state and 1 or 0)
+        self.pin:SetVertexColor(1.0, 0.82, 0.25, 0)
+        self.iconBoxSelected:SetAlpha(state and 1 or 0)
+        self.iconTex:SetAlpha(state and 1.0 or 0.82)
+        self.topLine:SetVertexColor(0.92, 0.60, 0.24, state and 0.62 or 0.10)
+        self.borderTop:SetVertexColor(0.85, 0.56, 0.24, 0)
+        if state then
+            self.label:SetTextColor(1, 1, 1, 1)
+            self.icon:SetTextColor(1, 0.84, 0.30, 1)
+        else
+            self.label:SetTextColor(GOLD[1], GOLD[2], GOLD[3], 1)
+            self.icon:SetTextColor(GOLD[1], GOLD[2], GOLD[3], 1)
+        end
+    end
+
+    b:SetScript("OnEnter", function(self)
+        if not self.selected then self.hl:SetVertexColor(0.90, 0.50, 0.14, 0.10) end
+        self.iconTex:SetAlpha(1)
+        self.label:SetTextColor(1, 1, 1, 1)
+    end)
+    b:SetScript("OnLeave", function(self)
+        self:SetSelected(self.selected)
+    end)
+    b:SetScript("OnMouseDown", function(self)
+        self.label:ClearAllPoints()
+        self.iconBox:ClearAllPoints()
+        self.iconBoxSelected:ClearAllPoints()
+        self.iconTex:ClearAllPoints()
+        self.icon:ClearAllPoints()
+        self.label:SetPoint("LEFT", self, "LEFT", 65, -1)
+        self.iconBox:SetPoint("LEFT", self, "LEFT", 1, -1)
+        self.iconBoxSelected:SetPoint("LEFT", self, "LEFT", 1, -1)
+        self.iconTex:SetPoint("LEFT", self, "LEFT", 9, -1)
+        self.icon:SetPoint("LEFT", self, "LEFT", 34, -15)
+    end)
+    b:SetScript("OnMouseUp", function(self)
+        self.label:ClearAllPoints()
+        self.iconBox:ClearAllPoints()
+        self.iconBoxSelected:ClearAllPoints()
+        self.iconTex:ClearAllPoints()
+        self.icon:ClearAllPoints()
+        self.label:SetPoint("LEFT", self, "LEFT", 64, 0)
+        self.iconBox:SetPoint("LEFT", self, "LEFT", -2, 0)
+        self.iconBoxSelected:SetPoint("LEFT", self, "LEFT", -2, 0)
+        self.iconTex:SetPoint("LEFT", self, "LEFT", 6, 0)
+        self.icon:SetPoint("LEFT", self, "LEFT", 31, -14)
+    end)
+    b:SetScript("OnClick", onClick)
+    b:SetSelected(false)
     return b
 end
 
@@ -608,26 +881,46 @@ local function CreateColorButton(parent, label, getter, setter)
         bl = tonumber(bl) or 1
         if not ColorPickerFrame then return end
 
-        local function apply()
+        local function apply(final)
             local nr, ng, nb = ColorPickerFrame:GetColorRGB()
             setter(nr, ng, nb)
             self:Refresh()
-            SP.UIPlumber:RefreshLive()
+            if final then
+                SP.UIPlumber:RefreshAfterChange()
+            else
+                SP.UIPlumber:RefreshLive()
+            end
         end
         local function cancel(prev)
             if prev then
-                setter(prev.r or r, prev.g or g, prev.b or bl)
+                setter(prev.r or prev[1] or r, prev.g or prev[2] or g, prev.b or prev[3] or bl)
                 self:Refresh()
                 SP.UIPlumber:RefreshAfterChange()
             end
         end
+        local function swatch()
+            apply(false)
+        end
 
-        ColorPickerFrame.func = apply
-        ColorPickerFrame.opacityFunc = apply
-        ColorPickerFrame.cancelFunc = cancel
-        ColorPickerFrame.previousValues = {r=r, g=g, b=bl}
-        pcall(ColorPickerFrame.SetColorRGB, ColorPickerFrame, r, g, bl)
-        ColorPickerFrame:Show()
+        pcall(ColorPickerFrame.Hide, ColorPickerFrame)
+
+        if ColorPickerFrame.SetupColorPickerAndShow then
+            ColorPickerFrame:SetupColorPickerAndShow({
+                r = r, g = g, b = bl,
+                swatchFunc = swatch,
+                opacityFunc = swatch,
+                cancelFunc = cancel,
+                hasOpacity = false,
+                previousValues = {r=r, g=g, b=bl, [1]=r, [2]=g, [3]=bl},
+            })
+        else
+            ColorPickerFrame.previousValues = {r=r, g=g, b=bl, [1]=r, [2]=g, [3]=bl}
+            pcall(ColorPickerFrame.SetColorRGB, ColorPickerFrame, r, g, bl)
+            ColorPickerFrame.func = swatch
+            ColorPickerFrame.opacityFunc = swatch
+            ColorPickerFrame.cancelFunc = cancel
+            ColorPickerFrame:Show()
+        end
     end)
     b:SetSize(COLUMN_WIDTH - 38, 28)
     b.swatch = b:CreateTexture(nil, "OVERLAY")
@@ -704,6 +997,9 @@ local function CreateSlider(parent, label, minValue, maxValue, step, getter, set
         f.value:SetText(formatValue(value))
         setter(value)
         SP.UIPlumber:RefreshLive()
+    end)
+    s:SetScript("OnMouseUp", function()
+        SP.UIPlumber:RefreshAfterChange()
     end)
     return f
 end
@@ -953,12 +1249,12 @@ local function CreateSectionHeader(parent, title, key, width)
     b.center:SetTexCoord(734/1024, 910/1024, 48/1024, 112/1024)
     b.right:SetTexCoord(910/1024, 950/1024, 48/1024, 112/1024)
 
-    b.label = Text(b, title, 13, MUTED)
+    b.label = Text(b, string.upper(title or ""), 13, GOLD)
     b.label:SetPoint("LEFT", b, "LEFT", 34, 0)
 
     function b:Refresh()
         local collapsed = SP.UIPlumber.collapsed and SP.UIPlumber.collapsed[key]
-        self.label:SetTextColor(collapsed and MUTED[1] or WHITE[1], collapsed and MUTED[2] or WHITE[2], collapsed and MUTED[3] or WHITE[3], 1)
+        self.label:SetTextColor(collapsed and MUTED[1] or GOLD[1], collapsed and MUTED[2] or GOLD[2], collapsed and MUTED[3] or GOLD[3], 1)
     end
     b:SetScript("OnClick", function(self)
         SP.UIPlumber.collapsed = SP.UIPlumber.collapsed or {}
@@ -971,6 +1267,7 @@ local function CreateSectionHeader(parent, title, key, width)
 end
 
 SP.UIPlumber = SP.UIPlumber or {
+    family = "nameplates",
     category = "enemy",
     unitKind = {enemy="npc", neutral="npc", friendly="npc"},
     page = "sphere",
@@ -979,7 +1276,43 @@ SP.UIPlumber = SP.UIPlumber or {
 }
 
 local function IsSpecialCategory(key)
-    return key == "behavior" or key == "modules" or key == "logs"
+    return key == "behavior" or key == "modules" or key == "logs" or key == "spdebug"
+end
+
+function SP.UIPlumber:GetFamily()
+    if self.category == "moi" then return "unitframes" end
+    if self.category == "behavior" then return "interface" end
+    if self.category == "modules" then return "modules" end
+    if self.category == "spdebug" or self.category == "logs" then return "spdebug" end
+    return "nameplates"
+end
+
+function SP.UIPlumber:SelectFamily(family)
+    self.family = family
+    if family == "nameplates" then
+        if self.category ~= "enemy" and self.category ~= "neutral" and self.category ~= "friendly" then
+            self.category = "enemy"
+        end
+        if self.page == "moi_behavior" or self.page == "actionbars" or self.page == "resources" then
+            self.page = "sphere"
+        end
+    elseif family == "unitframes" then
+        self.category = "moi"
+        self.unitKind.moi = "self"
+        if self.page == "target" or self.page == "effects" then self.page = "sphere" end
+    elseif family == "interface" then
+        self.category = "behavior"
+        self.optionsPage = self.optionsPage or "general"
+        self.page = "sphere"
+    elseif family == "modules" then
+        self.category = "modules"
+        self.page = "sphere"
+    else
+        self.category = "spdebug"
+        self.page = "spdebug"
+        self.spdebugPage = self.spdebugPage or "overview"
+    end
+    self:RefreshAll()
 end
 
 function SP.UIPlumber:GetUnitEntry()
@@ -991,6 +1324,9 @@ function SP.UIPlumber:GetUnitEntry()
     end
     if self.category == "logs" then
         return {kind="global", label="Logs", utype="ENEMY", title="Journal interne"}
+    end
+    if self.category == "spdebug" then
+        return {kind="global", label="SPDebug", utype="ENEMY", title="SPDebug"}
     end
     local list = UNIT_BY_CATEGORY[self.category] or UNIT_BY_CATEGORY.enemy
     local kind = self.unitKind[self.category] or "npc"
@@ -1026,7 +1362,7 @@ function SP.UIPlumber:GetCopySources()
     local current = self:GetUType()
     local out = {}
     for _, cat in ipairs(CATEGORY) do
-        if cat.key ~= "behavior" and cat.key ~= "modules" and cat.key ~= "logs" then
+        if cat.key ~= "behavior" and cat.key ~= "modules" and cat.key ~= "logs" and cat.key ~= "spdebug" then
             for _, entry in ipairs(UNIT_BY_CATEGORY[cat.key] or {}) do
                 if entry.utype and entry.utype ~= current then
                     out[#out + 1] = {
@@ -1091,6 +1427,12 @@ end
 
 function SP.UIPlumber:RefreshAfterChange()
     if SP.RefreshAll then SP:RefreshAll() end
+    if SP.Moi and SP.Moi.Refresh then
+        pcall(SP.Moi.Refresh, SP.Moi)
+    end
+    if SP.ActionBars and SP.ActionBars.Refresh then
+        pcall(SP.ActionBars.Refresh, SP.ActionBars)
+    end
     if SP.PlayerContextMenu and SP.PlayerContextMenu.RefreshAttachments then
         pcall(SP.PlayerContextMenu.RefreshAttachments, SP.PlayerContextMenu)
     end
@@ -1105,6 +1447,12 @@ end
 
 function SP.UIPlumber:RefreshLive()
     if SP.RefreshAll then SP:RefreshAll() end
+    if SP.Moi and SP.Moi.Refresh then
+        pcall(SP.Moi.Refresh, SP.Moi, true)
+    end
+    if SP.ActionBars and SP.ActionBars.UpdateAllButtons then
+        pcall(SP.ActionBars.UpdateAllButtons, SP.ActionBars)
+    end
     if SP.PlayerContextMenu and SP.PlayerContextMenu.RefreshAttachments then
         pcall(SP.PlayerContextMenu.RefreshAttachments, SP.PlayerContextMenu)
     end
@@ -1250,7 +1598,7 @@ end
 function SP.UIPlumber:BuildWindow()
     local win = CreateFrame("Frame", "SphereNameplatesPlumberStyleFrame", UIParent, "BackdropTemplate")
     self.win = win
-    win:SetSize(1300, 700)
+    win:SetSize(1180, 720)
     win:SetPoint("CENTER")
     win:SetFrameStrata("DIALOG")
     win:SetFrameLevel(400)
@@ -1263,14 +1611,15 @@ function SP.UIPlumber:BuildWindow()
 
     local left = CreateFrame("Frame", nil, win)
     win.left = left
-    left:SetSize(300, 640)
-    left:SetPoint("LEFT", win, "LEFT", 30, 8)
+    left:SetSize(1, 640)
+    left:SetPoint("LEFT", win, "LEFT", 1, 8)
     CreateNineSlice(left)
+    left:Hide()
 
     local right = CreateFrame("Frame", nil, win)
     win.right = right
-    right:SetSize(880, 640)
-    right:SetPoint("LEFT", left, "RIGHT", 44, 8)
+    right:SetSize(1120, 660)
+    right:SetPoint("CENTER", win, "CENTER", 0, 8)
     local ns = CreateNineSlice(right)
     local atlasOK = SafeAtlas(ns.bg, BG_ATLAS)
     if not atlasOK then
@@ -1279,7 +1628,7 @@ function SP.UIPlumber:BuildWindow()
     ns.bg:SetVertexColor(0.24, 0.20, 0.16, 0.92)
 
     local close = CreateCloseButton(right)
-    close:SetPoint("TOPRIGHT", right, "TOPRIGHT", 20, 22)
+    close:SetPoint("TOPRIGHT", right, "TOPRIGHT", -8, -6)
     close:SetScript("OnClick", function() win:Hide() end)
     win:SetScript("OnHide", function()
         if self._openDropdown then
@@ -1326,63 +1675,32 @@ function SP.UIPlumber:BuildWindow()
 
     local header = CreateFrame("Frame", nil, right)
     win.header = header
-    header:SetSize(820, 118)
+    header:SetSize(1070, 128)
     header:SetPoint("TOP", right, "TOP", 0, -18)
 
-    win.kindButtons = {}
-    local playerTab = CreateTextTab(header, "Joueurs", function()
-        self.unitKind.enemy = "player"
-        self.unitKind.friendly = "player"
-        self.unitKind.neutral = "npc"
-        if self.category == "neutral" or IsSpecialCategory(self.category) then
-            self.category = "enemy"
-        end
-        self:RefreshAll()
-    end)
-    playerTab:SetPoint("TOPLEFT", header, "TOPLEFT", 36, -2)
-    win.kindButtons.player = playerTab
-    win.topButtons = {player = playerTab}
-
-    local npcTab = CreateTextTab(header, "PNJ", function()
-        self.unitKind.enemy = "npc"
-        self.unitKind.neutral = "npc"
-        self.unitKind.friendly = "npc"
-        if IsSpecialCategory(self.category) then
-            self.category = "enemy"
-        end
-        self:RefreshAll()
-    end)
-    npcTab:SetPoint("LEFT", playerTab, "RIGHT", 18, 0)
-    win.kindButtons.npc = npcTab
-    win.topButtons.npc = npcTab
-
-    local optTab = CreateTextTab(header, "Options", function()
-        self.category = "behavior"
-        self.optionsPage = self.optionsPage or "general"
-        self:RefreshAll()
-    end, {0.55, 0.82, 1.00})
-    optTab:SetPoint("LEFT", npcTab, "RIGHT", 34, 0)
-    win.topButtons.behavior = optTab
-
-    local modTab = CreateTextTab(header, "Modules", function()
-        self.category = "modules"
-        self:RefreshAll()
-    end, {0.78, 0.68, 1.00})
-    modTab:SetPoint("LEFT", optTab, "RIGHT", 18, 0)
-    win.topButtons.modules = modTab
-
-    local logsTab = CreateTextTab(header, "Logs", function()
-        self.category = "logs"
-        self:RefreshAll()
-    end, {1.00, 0.62, 0.28})
-    logsTab:SetPoint("LEFT", modTab, "RIGHT", 18, 0)
-    win.topButtons.logs = logsTab
+    win.topButtons = {}
+    local lastTop
+    for _, nav in ipairs(MAIN_NAV) do
+        local color = nav.key == "interface" and {0.55, 0.82, 1.00}
+            or nav.key == "modules" and {0.78, 0.68, 1.00}
+            or nav.key == "spdebug" and {0.45, 1.00, 0.78}
+            or GOLD
+        local b = CreateTextTab(header, nav.label, function()
+            self:SelectFamily(nav.key)
+        end, color)
+        b:SetSize(nav.key == "nameplates" and 150 or nav.key == "unitframes" and 140 or 118, 32)
+        if lastTop then b:SetPoint("LEFT", lastTop, "RIGHT", 26, 0)
+        else b:SetPoint("TOPLEFT", header, "TOPLEFT", 34, -2) end
+        win.topButtons[nav.key] = b
+        lastTop = b
+    end
 
     win.catButtons = {}
     local last
     for _, cat in ipairs(CATEGORY) do
         if not IsSpecialCategory(cat.key) then
         local b = CreateTextTab(header, cat.label, function()
+            self.family = "nameplates"
             self.category = cat.key
             local _special = IsSpecialCategory(cat.key)
             if not _special and self.page == "behavior" then self.page = "sphere" end
@@ -1390,62 +1708,127 @@ function SP.UIPlumber:BuildWindow()
             self:RefreshAll()
         end)
         if last then b:SetPoint("LEFT", last, "RIGHT", 18, 0)
-        else b:SetPoint("TOPLEFT", header, "TOPLEFT", 36, -38) end
+        else b:SetPoint("TOPLEFT", header, "TOPLEFT", 36, -44) end
         win.catButtons[cat.key] = b
         last = b
         end
     end
 
-    win.select = CreateFrame("Button", nil, header)
-    win.select:SetSize(190, 32)
-    win.select:SetPoint("TOPRIGHT", header, "TOPRIGHT", -34, -4)
-    win.select.text = Text(win.select, "", 18, GOLD)
-    win.select.text:SetPoint("RIGHT", win.select, "RIGHT", -20, 0)
-    win.select.arrow = win.select:CreateTexture(nil, "OVERLAY")
-    win.select.arrow:SetSize(18, 18)
-    win.select.arrow:SetPoint("RIGHT", win.select.text, "LEFT", 0, 0)
-    SafeTexture(win.select.arrow, "Interface/AddOns/Plumber/Art/ExpansionLandingPage/ChecklistButton.tga")
-    win.select.arrow:SetTexCoord(0, 48/512, 208/512, 256/512)
-    win.select:SetScript("OnClick", function() self:ToggleUnitMenu() end)
-    win.select:Hide()
-
-    win.unitMenu = CreateFrame("Frame", nil, win.select, "BackdropTemplate")
-    win.unitMenu:SetSize(170, 58)
-    win.unitMenu:SetPoint("TOPRIGHT", win.select, "BOTTOMRIGHT", 0, -2)
-    win.unitMenu:SetFrameLevel(win:GetFrameLevel() + 30)
-    win.unitMenu:SetBackdrop({bgFile="Interface\\ChatFrame\\ChatFrameBackground", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", edgeSize=10, insets={left=2,right=2,top=2,bottom=2}})
-    win.unitMenu:SetBackdropColor(0.02, 0.016, 0.012, 0.98)
-    win.unitMenu:Hide()
-
     win.divider = CreateDivider(header)
     win.divider:SetPoint("LEFT", header, "BOTTOMLEFT", 22, 14)
     win.divider:SetPoint("RIGHT", header, "BOTTOMRIGHT", -22, 14)
 
+    local sideNav = CreateFrame("Frame", nil, right)
+    win.sideNav = sideNav
+    sideNav:SetSize(306, 548)
+    sideNav:SetPoint("TOPRIGHT", right, "TOPRIGHT", -20, -76)
+    sideNav:SetFrameLevel(right:GetFrameLevel() + 80)
+    close:ClearAllPoints()
+    close:SetPoint("TOPRIGHT", sideNav, "TOPRIGHT", -6, 132)
+    sideNav.bg = sideNav:CreateTexture(nil, "BACKGROUND")
+    sideNav.bg:SetAllPoints()
+    sideNav.bg:SetColorTexture(0.018, 0.014, 0.010, 0.34)
+    sideNav.innerGlow = sideNav:CreateTexture(nil, "BORDER")
+    sideNav.innerGlow:SetPoint("TOPLEFT", sideNav, "TOPLEFT", 6, -6)
+    sideNav.innerGlow:SetPoint("BOTTOMRIGHT", sideNav, "BOTTOMRIGHT", -6, 6)
+    sideNav.innerGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    sideNav.innerGlow:SetVertexColor(0.28, 0.11, 0.035, 0.03)
+    sideNav.topLine = sideNav:CreateTexture(nil, "ARTWORK")
+    sideNav.topLine:SetHeight(2)
+    sideNav.topLine:SetPoint("TOPLEFT", sideNav, "TOPLEFT", 14, -8)
+    sideNav.topLine:SetPoint("TOPRIGHT", sideNav, "TOPRIGHT", -14, -8)
+    sideNav.topLine:SetTexture("Interface\\Buttons\\WHITE8x8")
+    sideNav.topLine:SetVertexColor(0.85, 0.50, 0.18, 0.18)
+    sideNav.bottomLine = sideNav:CreateTexture(nil, "ARTWORK")
+    sideNav.bottomLine:SetHeight(1)
+    sideNav.bottomLine:SetPoint("BOTTOMLEFT", sideNav, "BOTTOMLEFT", 18, 8)
+    sideNav.bottomLine:SetPoint("BOTTOMRIGHT", sideNav, "BOTTOMRIGHT", -18, 8)
+    sideNav.bottomLine:SetTexture("Interface\\Buttons\\WHITE8x8")
+    sideNav.bottomLine:SetVertexColor(0.85, 0.50, 0.18, 0.14)
+    sideNav.divider = sideNav:CreateTexture(nil, "BORDER")
+    sideNav.divider:SetPoint("TOPLEFT", sideNav, "TOPLEFT", -18, 12)
+    sideNav.divider:SetPoint("BOTTOMLEFT", sideNav, "BOTTOMLEFT", -18, -8)
+    sideNav.divider:SetWidth(2)
+    sideNav.divider:SetColorTexture(0.78, 0.56, 0.28, 0.54)
+
+    win.contextTitle = Text(sideNav, "Contexte", 11, BRONZE)
+    win.contextTitle:SetPoint("TOPLEFT", sideNav, "TOPLEFT", 24, -22)
+    win.contextTitle:SetJustifyH("LEFT")
+    win.contextTitle:Hide()
+
+    win.contextButton = CreatePanelButton(sideNav, "", function() self:ToggleUnitMenu() end)
+    win.contextButton:SetSize(270, 30)
+    win.contextButton:SetPoint("TOP", sideNav, "TOP", 0, -20)
+    if win.contextButton.left then win.contextButton.left:SetAlpha(0) end
+    if win.contextButton.center then win.contextButton.center:SetAlpha(0) end
+    if win.contextButton.right then win.contextButton.right:SetAlpha(0) end
+    win.contextButton.skin = win.contextButton:CreateTexture(nil, "BACKGROUND")
+    win.contextButton.skin:SetAllPoints()
+    SafeTexture(win.contextButton.skin, PSUI_TEX .. "psui_dropdown.png")
+    win.contextButton.label:ClearAllPoints()
+    win.contextButton.label:SetPoint("LEFT", win.contextButton, "LEFT", 24, 0)
+    win.contextButton.label:SetJustifyH("LEFT")
+    win.contextButton.arrow = Text(win.contextButton, "v", 11, GOLD)
+    win.contextButton.arrow:SetPoint("RIGHT", win.contextButton, "RIGHT", -14, 0)
+    win.contextAlt = Text(sideNav, "", 11, MUTED)
+    win.contextAlt:SetPoint("TOPLEFT", win.contextButton, "BOTTOMLEFT", 24, -8)
+
+    win.pagesTitle = Text(sideNav, "Pages", 11, BRONZE)
+    win.pagesTitle:SetPoint("TOPLEFT", win.contextAlt, "BOTTOMLEFT", 0, -16)
+    win.pagesTitle:SetJustifyH("LEFT")
+    win.pagesTitle:Hide()
+
+    win.unitMenu = CreateFrame("Frame", nil, win.contextButton, "BackdropTemplate")
+    win.unitMenu:SetSize(202, 76)
+    win.unitMenu:SetPoint("TOP", win.contextButton, "BOTTOM", 0, -2)
+    win.unitMenu:SetFrameLevel(win:GetFrameLevel() + 40)
+    win.unitMenu:SetBackdrop({bgFile="Interface\\ChatFrame\\ChatFrameBackground", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", edgeSize=10, insets={left=2,right=2,top=2,bottom=2}})
+    win.unitMenu:SetBackdropColor(0.02, 0.016, 0.012, 0.98)
+    win.unitMenu:Hide()
+    win.select = win.contextButton
+
     win.pageButtons = {}
-    local pageContainer = CreateFrame("Frame", nil, right)
+    local pageContainer = CreateFrame("Frame", nil, sideNav)
     win.pageContainer = pageContainer
-    pageContainer:SetSize(820, 42)
-    pageContainer:SetPoint("TOP", header, "BOTTOM", 0, 0)
-    local prev
+    pageContainer:SetSize(292, 430)
+    pageContainer:SetPoint("TOP", sideNav, "TOP", 0, -92)
+    pageContainer:SetFrameLevel(sideNav:GetFrameLevel() + 4)
     for _, page in ipairs(PAGES) do
-        local b = CreateTextTab(pageContainer, page.label, function()
+        local b = CreateSideNavButton(pageContainer, page.label, SIDE_ICONS[page.key], function()
             self.page = page.key
             self:BuildQuick()
             self:BuildSettings()
+            self:RefreshHeader()
         end)
-        b:SetSize(108, 30)
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", 8, 0)
-        else b:SetPoint("LEFT", pageContainer, "LEFT", 18, 0) end
         win.pageButtons[page.key] = b
-        prev = b
     end
 
-    win.scroll = CreateScrollArea(right, 850, 430)
-    win.scroll:SetPoint("TOPRIGHT", pageContainer, "BOTTOMRIGHT", 22, -6)
-    win.content = win.scroll.child
+    win.specialButtons = {}
+    for _, item in ipairs(SPDEBUG_NAV) do
+        local b = CreateSideNavButton(pageContainer, item.label, SPDEBUG_ICONS[item.key], function()
+            self.spdebugPage = item.key
+            self.page = "spdebug"
+            self:BuildSettings()
+            self:RefreshHeader()
+        end)
+        win.specialButtons["spdebug_" .. item.key] = b
+    end
+    for _, item in ipairs(OPTIONS_NAV) do
+        local b = CreateSideNavButton(pageContainer, item.label, OPTIONS_ICONS[item.key], function()
+            self.optionsPage = item.key
+            self:RefreshAll()
+        end)
+        win.specialButtons["interface_" .. item.key] = b
+    end
 
-    win.status = Text(left, "", 10, MUTED)
-    win.status:SetPoint("BOTTOMLEFT", left, "BOTTOMLEFT", 40, 56)
+    win.scroll = CreateScrollArea(right, 704, 452)
+    win.scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 16, -36)
+    win.content = win.scroll.child
+    sideNav:SetFrameLevel(win.scroll:GetFrameLevel() + 30)
+    pageContainer:SetFrameLevel(sideNav:GetFrameLevel() + 4)
+
+    win.status = Text(right, "", 10, MUTED)
+    win.status:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 42, 28)
 
     self:BuildProfileBar()
 
@@ -1541,25 +1924,42 @@ function SP.UIPlumber:ToggleUnitMenu()
     local win = self.win
     if not win then return end
     local menu = win.unitMenu
-    if IsSpecialCategory(self.category) then menu:Hide(); return end
+    local family = self:GetFamily()
+    if family ~= "nameplates" and family ~= "unitframes" then menu:Hide(); return end
     if menu:IsShown() then menu:Hide(); return end
     self:ClearChildren(menu)
-    local list = UNIT_BY_CATEGORY[self.category] or UNIT_BY_CATEGORY.enemy
-    if #list <= 1 then
-        self.unitKind[self.category] = list[1].kind
-        menu:Hide()
-        self:RefreshHeader()
-        return
+    local list
+    if family == "unitframes" then
+        list = {
+            {kind="self", label="Moi", category="moi", enabled=true},
+            {kind="target", label="Cible", category="target_unitframe", enabled=false},
+            {kind="targettarget", label="Cible de la cible", category="targettarget_unitframe", enabled=false},
+        }
+    else
+        list = UNIT_BY_CATEGORY[self.category] or UNIT_BY_CATEGORY.enemy
     end
+    local rowCount = math.max(1, #list)
+    menu:SetHeight(rowCount * 24 + 12)
     local y = -6
     for _, entry in ipairs(list) do
         local b = self:AddChild(menu, CreateFrame("Button", nil, menu))
-        b:SetSize(150, 22)
+        b:SetSize(182, 22)
         b:SetPoint("TOP", menu, "TOP", 0, y)
-        b.text = Text(b, entry.label, 12, entry.kind == self.unitKind[self.category] and WHITE or GOLD)
+        local selected = family == "unitframes" and self.category == entry.category
+            or entry.kind == self.unitKind[self.category]
+        b.text = Text(b, entry.label, 12, selected and WHITE or (entry.enabled == false and MUTED or GOLD))
         b.text:SetPoint("CENTER")
         b:SetScript("OnClick", function()
-            self.unitKind[self.category] = entry.kind
+            if entry.enabled == false then
+                if SP.Print then SP:Print("UnitFrame '" .. tostring(entry.label) .. "' prevue, pas encore activee.") end
+                menu:Hide()
+                return
+            end
+            if family == "unitframes" then
+                self.category = entry.category
+            else
+                self.unitKind[self.category] = entry.kind
+            end
             menu:Hide()
             self:RefreshAll()
         end)
@@ -1571,7 +1971,7 @@ end
 function SP.UIPlumber:RebuildPreview()
     local win = self.win
     if not win then return end
-    if self.category == "behavior" or self.category == "modules" or self.category == "logs" then
+    if self.category == "behavior" or self.category == "modules" or self.category == "logs" or self.category == "spdebug" then
         if self.previewData then
             if self.previewData.castbar then pcall(SP.CastBar.Reset, SP.CastBar, self.previewData) end
             if self.previewData.root then self.previewData.root:Hide() end
@@ -1613,7 +2013,7 @@ function SP.UIPlumber:RebuildPreview()
             win.unitTitle:SetText("Marqueurs WoW")
             return
         end
-        local labels = {behavior="Options globales", modules="Modules et performance", logs="Journal interne"}
+        local labels = {behavior="Options globales", modules="Modules", logs="Journal interne", spdebug="SPDebug"}
         win.unitTitle:SetText(labels[self.category] or "")
         return
     end
@@ -1676,7 +2076,7 @@ function SP.UIPlumber:BuildQuick()
     local win = self.win
     local q = win.quick
     self:ClearChildren(q)
-    if self.category == "behavior" or self.category == "modules" or self.category == "logs" then
+    if self.category == "behavior" or self.category == "modules" or self.category == "logs" or self.category == "spdebug" then
         return
     end
 
@@ -1874,6 +2274,12 @@ function SP.UIPlumber:BuildSettings()
     local function setDB(k)
         return function(v)
             if SP.db then SP.db[k] = v end
+            if SP.Moi and SP.Moi.Refresh then
+                pcall(SP.Moi.Refresh, SP.Moi)
+            end
+            if SP.ActionBars and SP.ActionBars.Refresh then
+                pcall(SP.ActionBars.Refresh, SP.ActionBars)
+            end
         end
     end
     local function refreshBossEliteFrames()
@@ -1910,10 +2316,6 @@ function SP.UIPlumber:BuildSettings()
     if self.category == "behavior" then
         self.optionsPage = self.optionsPage or "general"
         local optPage = self.optionsPage or "general"
-        add(CreateOptionsNav(c, function() return self.optionsPage or "general" end, function(key)
-            self.optionsPage = key
-            self:RefreshAll()
-        end), 34, (#OPTIONS_NAV * 30) + 12)
 
         if optPage == "general" then
         section("Instance", "instance", function()
@@ -2166,51 +2568,37 @@ function SP.UIPlumber:BuildSettings()
             add(CreateCheck(c, "Attenuation distance (4/s)",       getDB("modules_fade_enabled", true),     setDB("modules_fade_enabled")),     34, 28)
             add(CreateCheck(c, "Inspection iLvL",                  getDB("modules_inspectilvl_enabled", true), setDB("modules_inspectilvl_enabled")), 34, 28)
             add(CreateCheck(c, "Indicateurs de quete",             getDB("modules_quest_enabled", true),    setDB("modules_quest_enabled")),    34, 28)
+            add(CreateCheck(c, "Sphere personnelle Moi",           getDB("modules_moi_enabled", true),      setDB("modules_moi_enabled")),      34, 28)
         end)
-        -- ── Colonne 2 : Performance Monitor ─────────────────────────────────────
-        section("Performance Monitor", "perfPanel", function()
-            add(CreateCheck(c, "Activer le suivi de performance", getDB("perf_enabled", false), setDB("perf_enabled")), 34, 28)
-            add(CreateSlider(c, "Seuil alerte (ms)", 0.5, 20.0, 0.5, getDB("perf_seuil_ms", 5.0), setDB("perf_seuil_ms")), 34, 48)
-            -- Bouton toggle panneau flottant
-            local pbtn = CreateFrame("Button", nil, c)
-            pbtn:SetSize(COLUMN_WIDTH - 68, 28)
-            local pbtex = pbtn:CreateTexture(nil, "BACKGROUND")
-            pbtex:SetAllPoints()
-            pbtex:SetColorTexture(0.12, 0.08, 0.04, 0.90)
-            local pbtxt = pbtn:CreateFontString(nil, "OVERLAY")
-            pbtxt:SetFontObject(GameFontNormal)
-            pbtxt:SetPoint("CENTER")
-            pbtxt:SetText("|cFFFF8800Panneau Perf|r  |cFF888888(/snp perf)|r")
-            pbtn:SetScript("OnClick", function()
-                if SP.Profiler then SP.Profiler:TogglePanel() end
+        section("Diagnostic centralise", "spdebugLink", function()
+            local hint = Text(c, "Logs, FPS, alertes et profiler live sont centralises dans SPDebug.", 10, MUTED)
+            hint:SetWidth(COLUMN_WIDTH - 54)
+            hint:SetJustifyH("LEFT")
+            add(hint, 34, 38)
+
+            local b = CreateFrame("Button", nil, c)
+            b:SetSize(COLUMN_WIDTH - 68, 28)
+            local bg = b:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.10, 0.07, 0.04, 0.92)
+            local txt = b:CreateFontString(nil, "OVERLAY")
+            txt:SetFontObject(GameFontNormalSmall)
+            txt:SetPoint("CENTER")
+            txt:SetText("|cFF44FFAAOuvrir SPDebug|r")
+            b:SetScript("OnClick", function()
+                self.category = "spdebug"
+                self.page = "spdebug"
+                self.spdebugPage = "overview"
+                self:RefreshAll()
             end)
-            add(pbtn, 34, 32)
-            -- Bouton reset stats
-            local rbtn = CreateFrame("Button", nil, c)
-            rbtn:SetSize(COLUMN_WIDTH - 68, 28)
-            local rbtex = rbtn:CreateTexture(nil, "BACKGROUND")
-            rbtex:SetAllPoints()
-            rbtex:SetColorTexture(0.08, 0.06, 0.04, 0.90)
-            local rbtxt = rbtn:CreateFontString(nil, "OVERLAY")
-            rbtxt:SetFontObject(GameFontNormalSmall)
-            rbtxt:SetPoint("CENTER")
-            rbtxt:SetText("|cFF888888Remettre les stats a zero|r")
-            rbtn:SetScript("OnClick", function()
-                if SP.Profiler then SP.Profiler:ResetStats() end
-            end)
-            add(rbtn, 34, 28)
-        end, 2)
-        -- ── Colonne 2 (suite) : Options logs ────────────────────────────────────
-        section("Logs internes", "logsOpts", function()
-            add(CreateCheck(c, "Activer les logs",   getDB("logs_enabled", false),      setDB("logs_enabled")),      34, 28)
-            add(CreateSlider(c, "Capacite buffer", 50, 1000, 50, getDB("logs_max_entries", 200), setDB("logs_max_entries")), 34, 48)
-            add(CreateCheck(c, "Niveau INFO",        getDB("logs_level_info", true),    setDB("logs_level_info")),   34, 28)
-            add(CreateCheck(c, "Niveau WARN",        getDB("logs_level_warn", true),    setDB("logs_level_warn")),   34, 28)
-            add(CreateCheck(c, "Niveau PERF",        getDB("logs_level_perf", true),    setDB("logs_level_perf")),   34, 28)
-            add(CreateCheck(c, "Niveau DEBUG",       getDB("logs_level_debug", false),  setDB("logs_level_debug")),  34, 28)
+            add(b, 34, 30)
         end, 2)
 
     elseif self.category == "logs" then
+        self.category = "spdebug"
+        self.page = "spdebug"
+        self.spdebugPage = "logs"
+        do return self:BuildSettings() end
         -- ── Visionneuse de logs ─────────────────────────────────────────────────
         -- Bouton vider + compteur
         local lcount = SP.Log and SP.Log:Count() or 0
@@ -2288,8 +2676,192 @@ function SP.UIPlumber:BuildSettings()
             add(logFrame, 8, logFrame:GetHeight())
         end
 
+    elseif self.category == "spdebug" then
+        local dbg = SP.SPDebug
+        local spPage = self.spdebugPage or "overview"
+        local function setSPPage(page)
+            return function()
+                self.spdebugPage = page
+                self:BuildSettings()
+            end
+        end
+        local function simpleButton(label, onClick)
+            local b = CreateFrame("Button", nil, c)
+            b:SetSize(COLUMN_WIDTH - 68, 28)
+            local bg = b:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.10, 0.07, 0.04, 0.92)
+            local txt = b:CreateFontString(nil, "OVERLAY")
+            txt:SetFontObject(GameFontNormalSmall)
+            txt:SetPoint("CENTER")
+            txt:SetText(label)
+            b:SetScript("OnClick", onClick)
+            return b
+        end
+        local function joinedLines(lines, width, size)
+            local f = CreateFrame("Frame", nil, c)
+            local txt = f:CreateFontString(nil, "OVERLAY")
+            txt:SetFont("Fonts\\FRIZQT__.TTF", size or 10, "")
+            txt:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
+            txt:SetWidth(width or (COLUMN_WIDTH - 68))
+            txt:SetJustifyH("LEFT")
+            txt:SetJustifyV("TOP")
+            txt:SetSpacing(2)
+            txt:SetText(table.concat(lines, "\n"))
+            f:SetSize(width or (COLUMN_WIDTH - 68), math.max(20, #lines * ((size or 10) + 5)))
+            return f
+        end
+        local function fmtMs(v) return string.format("%.3f", tonumber(v) or 0) end
+        local function moduleOptions()
+            local opts, seen = {{value="ALL", label="Tous"}}, {ALL=true}
+            if dbg then
+                for name in pairs(dbg.stats or {}) do
+                    if not seen[name] then opts[#opts + 1] = {value=name, label=name}; seen[name] = true end
+                end
+            end
+            local entries = SP.Log and SP.Log:GetEntries({max=120}) or {}
+            for _, e in ipairs(entries) do
+                if e.module and not seen[e.module] then
+                    opts[#opts + 1] = {value=e.module, label=e.module}
+                    seen[e.module] = true
+                end
+            end
+            table.sort(opts, function(a, b) return tostring(a.label) < tostring(b.label) end)
+            return opts
+        end
+
+        section("SPDebug", "nav", function()
+            add(simpleButton((spPage == "overview" and "|cFF44FFAA" or "|cFFFFFFFF") .. "Vue globale|r", setSPPage("overview")), 34, 30)
+            add(simpleButton((spPage == "modules" and "|cFF44FFAA" or "|cFFFFFFFF") .. "Modules|r", setSPPage("modules")), 34, 30)
+            add(simpleButton((spPage == "logs" and "|cFF44FFAA" or "|cFFFFFFFF") .. "Logs|r", setSPPage("logs")), 34, 30)
+            add(simpleButton((spPage == "events" and "|cFF44FFAA" or "|cFFFFFFFF") .. "Evenements|r", setSPPage("events")), 34, 30)
+            add(simpleButton((spPage == "options" and "|cFF44FFAA" or "|cFFFFFFFF") .. "Options|r", setSPPage("options")), 34, 30)
+        end, 1)
+
+        if not dbg then
+            section("Etat", "missing", function()
+                add(joinedLines({"|cFFFF4444SPDebug non charge.|r"}), 34, 28)
+            end, 2)
+        elseif spPage == "overview" then
+            section("Vue globale", "overview", function()
+                local cur, avg, minv, maxv = dbg:GetFPSStats()
+                local mem = (SP.db and SP.db.spdebug_memory_enabled ~= false) and dbg:GetMemoryKB() or nil
+                local lines = {
+                    string.format("|cFFFFD100FPS|r actuel %.0f  moy %.0f  min %.0f  max %.0f", cur or 0, avg or 0, minv or 0, maxv or 0),
+                    string.format("|cFFFFD100Nameplates|r %d  |cFFFFD100Modules actifs|r %d", dbg:CountPlates(), dbg:CountEnabledModules()),
+                    string.format("|cFFFFD100Combat|r %s  |cFFFFD100Pack|r %s", SP.InCombat and "|cFFFF4444oui|r" or "|cFF44FF44non|r", SP._packMode and "oui" or "non"),
+                    string.format("|cFFFFD100Memoire addon|r %s", mem and (string.format("%.0f KB", mem)) or "non disponible"),
+                    "|cFF888888GPU par module non expose par l'API WoW.|r",
+                }
+                add(joinedLines(lines, COLUMN_WIDTH - 68, 10), 34, 90)
+            end, 2)
+            section("Top modules CPU", "top", function()
+                local lines = {"|cFF888888module                  /s     avg    pic    total|r"}
+                for _, row in ipairs(dbg:GetTopModules(8)) do
+                    local s = row.s
+                    lines[#lines + 1] = string.format("%-22s %4d  %6s %6s %7.1f",
+                        row.name, s.calls_per_sec or 0, fmtMs(s.avg_ms), fmtMs(s.peak_ms), s.total_ms or 0)
+                end
+                if #lines == 1 then lines[#lines + 1] = "|cFF888888Aucune mesure. Active le monitoring CPU.|r" end
+                add(joinedLines(lines, COLUMN_WIDTH - 68, 9), 34, math.max(42, #lines * 15))
+            end, 1)
+            section("Alertes recentes", "alerts", function()
+                local lines = {}
+                for _, a in ipairs(dbg:GetAlerts(8)) do
+                    lines[#lines + 1] = string.format("[%s] %-16s %.2fms %s", a.date or "?", a.module or "?", a.ms or 0, a.event or "")
+                end
+                if #lines == 0 then lines[#lines + 1] = "|cFF888888Aucune alerte recente.|r" end
+                add(joinedLines(lines, COLUMN_WIDTH - 68, 9), 34, math.max(28, #lines * 15))
+            end, 2)
+        elseif spPage == "modules" then
+            section("Modules", "modules", function()
+                local lines = {"|cFF888888module                  /s     avg     pic    total  frames tex err|r"}
+                for _, row in ipairs(dbg:GetTopModules(24)) do
+                    local s = row.s
+                    lines[#lines + 1] = string.format("%-22s %4d  %6s %6s %7.1f %5d %3d %3d",
+                        row.name, s.calls_per_sec or 0, fmtMs(s.avg_ms), fmtMs(s.peak_ms), s.total_ms or 0,
+                        s.frames or 0, s.textures or 0, s.errors or 0)
+                end
+                if #lines == 1 then lines[#lines + 1] = "|cFF888888Aucune mesure pour l'instant.|r" end
+                add(joinedLines(lines, COLUMN_WIDTH * 2 + COLUMN_GAP - 68, 9), 34, math.max(42, #lines * 15), 1)
+            end, 1)
+        elseif spPage == "logs" then
+            section("Filtres logs", "logFilters", function()
+                add(CreateCycle(c, "Niveau", {
+                    {value="ALL", label="Tous"},
+                    {value="INFO", label="INFO"},
+                    {value="WARN", label="WARN"},
+                    {value="ERROR", label="ERROR"},
+                    {value="PERF", label="PERF"},
+                    {value="DEBUG", label="DEBUG"},
+                }, getDB("spdebug_log_filter_level", "ALL"), setDB("spdebug_log_filter_level")), 34, 32)
+                add(CreateCycle(c, "Module", moduleOptions(), getDB("spdebug_log_filter_module", "ALL"), setDB("spdebug_log_filter_module")), 34, 32)
+                add(simpleButton("|cFFFF6666Purger les logs|r", function()
+                    if SP.Log then SP.Log:Clear() end
+                    self:BuildSettings()
+                end), 34, 30)
+            end, 1)
+            section("Logs", "logLines", function()
+                local level = SP.db and SP.db.spdebug_log_filter_level or "ALL"
+                local module = SP.db and SP.db.spdebug_log_filter_module or "ALL"
+                local entries = SP.Log and SP.Log:GetEntries({level=level, module=module, max=120}) or {}
+                local cols = (SP.Log and SP.Log.LEVEL_COLORS) or {}
+                local lines = {}
+                for _, e in ipairs(entries) do
+                    lines[#lines + 1] = string.format("|cFF888888%s|r %s[%-5s]|r |cFFFFFF88%-14s|r %s",
+                        e.date or "?", cols[e.level] or "|cFFFFFFFF", e.level or "?", e.module or "?", e.msg or "")
+                end
+                if #lines == 0 then lines[#lines + 1] = SP.Log and SP.Log:IsEnabled() and "|cFF888888Aucun log.|r" or "|cFFFFAA00Logs desactives.|r" end
+                add(joinedLines(lines, COLUMN_WIDTH * 2 + COLUMN_GAP - 68, 9), 34, math.max(32, #lines * 14), 1)
+            end, 2)
+        elseif spPage == "events" then
+            section("Evenements", "events", function()
+                local lines = {"|cFF888888event                         count    avg    pic   dernier arg|r"}
+                for _, row in ipairs(dbg:GetEventRows(32)) do
+                    local e = row.e
+                    lines[#lines + 1] = string.format("%-30s %5d  %6s %6s  %s",
+                        row.name, e.count or 0, fmtMs(e.avg_ms), fmtMs(e.peak_ms), e.last_arg or "")
+                end
+                if #lines == 1 then lines[#lines + 1] = "|cFF888888Aucun evenement trace.|r" end
+                add(joinedLines(lines, COLUMN_WIDTH * 2 + COLUMN_GAP - 68, 9), 34, math.max(42, #lines * 15), 1)
+            end, 1)
+        else
+            section("Options SPDebug", "opts", function()
+                add(CreateCheck(c, "Activer SPDebug", getDB("spdebug_enabled", true), setDB("spdebug_enabled")), 34, 28)
+                add(CreateCheck(c, "Monitoring CPU", getDB("perf_enabled", false), setDB("perf_enabled")), 34, 28)
+                add(CreateCheck(c, "Logs", getDB("logs_enabled", false), setDB("logs_enabled")), 34, 28)
+                add(CreateCheck(c, "Logs PERF", getDB("logs_level_perf", true), setDB("logs_level_perf")), 34, 28)
+                add(CreateCheck(c, "FPS live", getDB("spdebug_fps_enabled", true), setDB("spdebug_fps_enabled")), 34, 28)
+                add(CreateCheck(c, "Memoire addon", getDB("spdebug_memory_enabled", true), setDB("spdebug_memory_enabled")), 34, 28)
+                add(CreateSlider(c, "Refresh UI", 0.5, 3.0, 0.25, getDB("spdebug_refresh_sec", 0.5), setDB("spdebug_refresh_sec")), 34, 48)
+                add(CreateSlider(c, "Seuil alerte ms", 0.5, 20.0, 0.5, getDB("perf_seuil_ms", 5.0), setDB("perf_seuil_ms")), 34, 48)
+                add(CreateSlider(c, "Throttle alertes", 1.0, 20.0, 0.5, getDB("spdebug_alert_throttle", 3.0), setDB("spdebug_alert_throttle")), 34, 48)
+            end, 1)
+            section("Actions", "actions", function()
+                add(simpleButton("Reset stats", function()
+                    if SP.SPDebug then SP.SPDebug:ResetStats() end
+                    self:BuildSettings()
+                end), 34, 30)
+                add(simpleButton("Purger logs", function()
+                    if SP.Log then SP.Log:Clear() end
+                    self:BuildSettings()
+                end), 34, 30)
+            end, 2)
+        end
+
     elseif self.page == "sphere" then
-        section("Orbe", "orb", function()
+        if self:GetUType() == "PLAYER_SELF" then
+            section("Moi", "moiMain", function()
+                add(CreateCheck(c, "Activer la sphere Moi", getDB("moi_enabled", false), setDB("moi_enabled")), 34, 28)
+                add(CreateCycle(c, "Affichage", {
+                    {value="always", label="Toujours"},
+                    {value="combat", label="Combat seulement"},
+                }, getDB("moi_display_mode", "always"), setDB("moi_display_mode")), 34, 32)
+                add(CreateCheck(c, "Verrouiller position", getDB("moi_locked", false), setDB("moi_locked")), 34, 28)
+                add(CreateCheck(c, "Masquer frame joueur Blizzard", getDB("moi_hide_blizzard_player", true), setDB("moi_hide_blizzard_player")), 34, 28)
+            end, 1)
+        end
+        section("Apparence generale", "orb", function()
             add(CreateCycle(c, "Affichage de la sphere", {
                 {value="never",  label="Ne pas afficher"},
                 {value="combat", label="Uniquement en combat"},
@@ -2301,7 +2873,7 @@ function SP.UIPlumber:BuildSettings()
             add(CreateSlider(c, "Decalage Y", -200, 200, 1, get("offsetY", 0), set("offsetY")), 34, 48)
             add(CreateSlider(c, "Fluidite HP", 1, 30, 0.5, get("hp_lerp_speed", 8), set("hp_lerp_speed")), 34, 48)
         end, 1)
-        section("Couleur de remplissage", "fill", function()
+        section("Personnalisation", "fill", function()
             local function currentFillMode()
                 local mode = self:GetCfgValue("fill_color_mode", "fixed")
                 if mode == "custom" then mode = "fixed" end
@@ -2329,10 +2901,23 @@ function SP.UIPlumber:BuildSettings()
             end
             add(CreateSlider(c, "Saturation", 0, 2, 0.05, get("fill_saturation", 1), set("fill_saturation")), 34, 48)
             add(CreateSlider(c, "Transparence", 0.1, 1, 0.01, get("fill_alpha", 0.88), set("fill_alpha")), 34, 48)
+            add(CreateSlider(c, "Voile HP solide", 0, 1, 0.01, get("orb_hp_fill_alpha", 0), set("orb_hp_fill_alpha")), 34, 48)
         end, 2)
         section("Arriere-plan", "background", function()
             add(CreateColorButton(c, "Couleur de fond", getColor("bgR", "bgG", "bgB", 0, 0, 0), setColor("bgR", "bgG", "bgB")), 34, 30)
             add(CreateSlider(c, "Opacite du fond", 0, 1, 0.05, get("bgAlpha", 0.75), set("bgAlpha")), 34, 48)
+            add(CreateCheck(c, "Vider le fond avec HP", get("orb_empty_clear_enabled", true), function(v)
+                self:SetCfg("orb_empty_clear_enabled", v)
+                if v then
+                    self:SetCfg("orb_empty_shade_enabled", false)
+                    self:SetCfg("orb_empty_shade_alpha", 0)
+                end
+            end), 34, 28)
+            add(CreateCheck(c, "Voile colore zone vide", get("orb_empty_shade_enabled", false), set("orb_empty_shade_enabled")), 34, 28)
+            if get("orb_empty_shade_enabled", false)() then
+                add(CreateColorButton(c, "Couleur voile vide", getColor("orb_empty_shadeR", "orb_empty_shadeG", "orb_empty_shadeB", 0, 0, 0), setColor("orb_empty_shadeR", "orb_empty_shadeG", "orb_empty_shadeB")), 34, 30)
+                add(CreateSlider(c, "Opacite voile vide", 0, 1, 0.01, get("orb_empty_shade_alpha", 0), set("orb_empty_shade_alpha")), 34, 48)
+            end
         end, 2)
         section("Lisibilite (Codex fix)", "readability", function()
             add(CreateSlider(c, "Ombre interne", 0, 0.9, 0.02, get("orb_shadow_alpha", 0.35), set("orb_shadow_alpha")), 34, 48)
@@ -2612,6 +3197,14 @@ function SP.UIPlumber:BuildSettings()
                     setColor("castbar_text_colorR", "castbar_text_colorG", "castbar_text_colorB")), 34, 30)
                 add(CreateSlider(c, "Taille police", 6, 24, 1, get("castbar_nameFontSize", 10), set("castbar_nameFontSize")), 34, 48)
             end
+            add(CreateSlider(c, "Decalage Y timer", -160, 160, 1, get("castbar_time_offset_y", 0), set("castbar_time_offset_y")), 34, 48)
+            add(CreateCycle(c, "Police timer", getFontOptions(), function()
+                return self:GetCfgValue("castbar_time_font", self:GetCfgValue("castbar_text_font", "Friz Quadrata TT"))
+            end, set("castbar_time_font")), 34, 32)
+            add(CreateSlider(c, "Taille timer", 6, 32, 1, function()
+                local nameFS = tonumber(self:GetCfgValue("castbar_nameFontSize", 10)) or 10
+                return self:GetCfgValue("castbar_time_font_size", math.max(7, nameFS - 2))
+            end, set("castbar_time_font_size")), 34, 48)
         end, 1)
 
         section("Interruption", "interrupt", function()
@@ -2790,7 +3383,7 @@ function SP.UIPlumber:BuildSettings()
                 add(CreateSlider(c, "Alpha glow", 0.10, 1.0, 0.02, get("castbar_collapse_glow_alpha", 0.85), set("castbar_collapse_glow_alpha")), 34, 48)
                 add(CreateSlider(c, "Intensite glow", 0.0, 2.0, 0.05, get("castbar_collapse_glow_intensity", 1.0), set("castbar_collapse_glow_intensity")), 34, 48)
                 add(CreateSlider(c, "Rayon initial", 0.8, 2.5, 0.05, get("castbar_collapse_glow_start_scale", 1.65), set("castbar_collapse_glow_start_scale")), 34, 48)
-                add(CreateSlider(c, "Rayon final", 0.20, 1.2, 0.05, get("castbar_collapse_glow_end_scale", 0.45), set("castbar_collapse_glow_end_scale")), 34, 48)
+                add(CreateSlider(c, "Rayon final", -2.0, 2.0, 0.01, get("castbar_collapse_glow_end_scale", 0.45), set("castbar_collapse_glow_end_scale")), 34, 48)
                 add(CreateSlider(c, "Epaisseur visuelle", 0.25, 2.5, 0.05, get("castbar_collapse_glow_thickness", 1.0), set("castbar_collapse_glow_thickness")), 34, 48)
                 add(CreateCheck(c, "Pulse glow", get("castbar_collapse_glow_pulse", true), set("castbar_collapse_glow_pulse")), 34, 28)
                 add(CreateCheck(c, "Flash de fin", get("castbar_collapse_glow_complete_flash", true), set("castbar_collapse_glow_complete_flash")), 34, 28)
@@ -2839,7 +3432,7 @@ function SP.UIPlumber:BuildSettings()
     elseif self.page == "text" then
         section("Nom", "name", function()
             local nameUType = self:GetUType()
-            local nameIsPlayer = (nameUType == "ENEMY_PLAYER" or nameUType == "FRIENDLY_PLAYER")
+            local nameIsPlayer = (nameUType == "ENEMY_PLAYER" or nameUType == "FRIENDLY_PLAYER" or nameUType == "PLAYER_SELF")
 
             add(CreateCheck(c, "Afficher le nom", get("showName", true), set("showName")), 34, 28)
 
@@ -2894,6 +3487,22 @@ function SP.UIPlumber:BuildSettings()
             add(CreateSlider(c, "Decalage nom X", -80, 80, 1, get("nameOffsetX", 0), set("nameOffsetX")), 34, 48)
             add(CreateSlider(c, "Decalage nom Y", -80, 80, 1, get("nameOffsetY", 6), set("nameOffsetY")), 34, 48)
             add(CreateSlider(c, "Largeur max nom", 0, 260, 5, get("name_maxWidth", 0), set("name_maxWidth")), 34, 48)
+
+            add(CreateCheck(c, "Distance du nom", get("name_distance_enabled", false), set("name_distance_enabled")), 34, 28)
+            if self:GetCfgValue("name_distance_enabled", false) then
+                add(CreateCycle(c, "Mode distance", {
+                    {value="limit", label="Limite"},
+                    {value="fade",  label="Fondu"},
+                }, get("name_distance_mode", "limit"), set("name_distance_mode")), 34, 32)
+
+                local distanceMode = self:GetCfgValue("name_distance_mode", "limit")
+                if distanceMode == "fade" then
+                    add(CreateSlider(c, "Visible max a", 0, 40, 1, get("name_fade_full", 2), set("name_fade_full")), 34, 48)
+                    add(CreateSlider(c, "Invisible a", 2, 80, 1, get("name_fade_hidden", 20), set("name_fade_hidden")), 34, 48)
+                else
+                    add(CreateSlider(c, "Distance max nom", 2, 80, 1, get("name_distance_max", 20), set("name_distance_max")), 34, 48)
+                end
+            end
         end, 1)
         section("Niveau / HP", "hp", function()
             add(CreateCheck(c, "Afficher niveau / HP", get("showLevelOrHP", true), set("showLevelOrHP")), 34, 28)
@@ -2908,6 +3517,10 @@ function SP.UIPlumber:BuildSettings()
             add(CreateCheck(c, "Afficher symbole %", get("hp_show_percent", false), set("hp_show_percent")), 34, 28)
             add(CreateCycle(c, "Police HP", getFontOptions(), get("levelFont", "Friz Quadrata TT"), set("levelFont")), 34, 32)
             add(CreateSlider(c, "Taille texte HP", 6, 28, 1, get("levelFontSize", 11), set("levelFontSize")), 34, 48)
+            add(CreateSlider(c, "Decalage texte HP X", -80, 80, 1, get("hpTextOffsetX", 0), set("hpTextOffsetX")), 34, 48)
+            add(CreateSlider(c, "Decalage texte HP Y", -80, 80, 1, get("hpTextOffsetY", 0), set("hpTextOffsetY")), 34, 48)
+            add(CreateSlider(c, "Decalage sous-texte HP X", -80, 80, 1, get("hpSubTextOffsetX", 0), set("hpSubTextOffsetX")), 34, 48)
+            add(CreateSlider(c, "Decalage sous-texte HP Y", -80, 80, 1, get("hpSubTextOffsetY", 0), set("hpSubTextOffsetY")), 34, 48)
         end, 2)
         section("Couleurs % HP", "hpPercentColors", function()
             local function setPercentMode(v)
@@ -2936,8 +3549,8 @@ function SP.UIPlumber:BuildSettings()
                 add(CreateColorButton(c, "24 - 0%", getColor("hp_col4_r", "hp_col4_g", "hp_col4_b", 1.0, 0.15, 0.15), setColor("hp_col4_r", "hp_col4_g", "hp_col4_b")), 34, 30)
             else
                 add(CreateColorButton(c, "Couleur fixe", getColor("hpPercentTextR", "hpPercentTextG", "hpPercentTextB", 1, 1, 1), setColor("hpPercentTextR", "hpPercentTextG", "hpPercentTextB")), 34, 30)
-                add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpPercentTextA", 1), set("hpPercentTextA")), 34, 48)
             end
+            add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpPercentTextA", 1), set("hpPercentTextA")), 34, 48)
         end, 2)
         section("Couleurs valeur HP", "hpAbsoluteColors", function()
             add(CreateCycle(c, "Mode", {
@@ -2951,14 +3564,78 @@ function SP.UIPlumber:BuildSettings()
                 add(CreateColorButton(c, "24 - 0%", getColor("hp_abs_col4_r", "hp_abs_col4_g", "hp_abs_col4_b", 1.0, 0.15, 0.15), setColor("hp_abs_col4_r", "hp_abs_col4_g", "hp_abs_col4_b")), 34, 30)
             else
                 add(CreateColorButton(c, "Couleur fixe", getColor("hpAbsoluteTextR", "hpAbsoluteTextG", "hpAbsoluteTextB", 1, 1, 1), setColor("hpAbsoluteTextR", "hpAbsoluteTextG", "hpAbsoluteTextB")), 34, 30)
-                add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpAbsoluteTextA", 1), set("hpAbsoluteTextA")), 34, 48)
             end
+            add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpAbsoluteTextA", 1), set("hpAbsoluteTextA")), 34, 48)
         end, 2)
         section("Sous-titres", "subtitle", function()
             add(CreateCheck(c, "Afficher sous-titre", get("showSubTitle", false), set("showSubTitle")), 34, 28)
             add(CreateCheck(c, "Afficher guilde", get("showGuild", false), set("showGuild")), 34, 28)
             add(CreateCheck(c, "Afficher honneur", get("showHonor", false), set("showHonor")), 34, 28)
         end, 1)
+    elseif self.page == "life" then
+        section("Vie / HP", "lifeMain", function()
+            add(CreateCheck(c, "Afficher niveau / HP", get("showLevelOrHP", true), set("showLevelOrHP")), 34, 28)
+            add(CreateCheck(c, "iLvL joueurs max niveau", get("show_ilvl", true), set("show_ilvl")), 34, 28)
+            add(CreateCheck(c, "HP sous MAX / iLvL", get("show_hp_under_maxlvl", false), set("show_hp_under_maxlvl")), 34, 28)
+            add(CreateCheck(c, "HP aussi dans l'orbe", get("showHPAlsoInOrb", false), set("showHPAlsoInOrb")), 34, 28)
+            add(CreateCycle(c, "Format HP", {
+                {value="percent", label="Pourcentage"},
+                {value="absolute", label="Valeur"},
+                {value="both", label="Les deux"},
+            }, get("hpFormat", "percent"), set("hpFormat")), 34, 32)
+            add(CreateCheck(c, "Afficher symbole %", get("hp_show_percent", false), set("hp_show_percent")), 34, 28)
+            add(CreateCycle(c, "Police HP", getFontOptions(), get("levelFont", "Friz Quadrata TT"), set("levelFont")), 34, 32)
+            add(CreateSlider(c, "Taille texte HP", 6, 28, 1, get("levelFontSize", 11), set("levelFontSize")), 34, 48)
+        end, 1)
+        section("Position HP", "lifePosition", function()
+            add(CreateSlider(c, "Decalage texte HP X", -80, 80, 1, get("hpTextOffsetX", 0), set("hpTextOffsetX")), 34, 48)
+            add(CreateSlider(c, "Decalage texte HP Y", -80, 80, 1, get("hpTextOffsetY", 0), set("hpTextOffsetY")), 34, 48)
+            add(CreateSlider(c, "Decalage sous-texte HP X", -80, 80, 1, get("hpSubTextOffsetX", 0), set("hpSubTextOffsetX")), 34, 48)
+            add(CreateSlider(c, "Decalage sous-texte HP Y", -80, 80, 1, get("hpSubTextOffsetY", 0), set("hpSubTextOffsetY")), 34, 48)
+        end, 2)
+        section("Couleurs % HP", "lifePercentColors", function()
+            local function setPercentMode(v)
+                self:SetCfg("hp_percent_color_mode", v)
+                self:SetCfg("hp_color_dynamic", v == "dynamic")
+            end
+            add(CreateCycle(c, "Mode", {
+                {value="fixed", label="Fixe"},
+                {value="dynamic", label="Dynamique"},
+            }, function()
+                local mode = self:GetCfgValue("hp_percent_color_mode", nil)
+                if mode == nil and self:GetCfgValue("hp_color_dynamic", false) then
+                    return "dynamic"
+                end
+                if mode == "dynamic" then return "dynamic" end
+                return "fixed"
+            end, setPercentMode), 34, 32)
+            local percentMode = self:GetCfgValue("hp_percent_color_mode", nil)
+            if percentMode == nil and self:GetCfgValue("hp_color_dynamic", false) then percentMode = "dynamic" end
+            if percentMode == "dynamic" then
+                add(CreateColorButton(c, "100 - 75%", getColor("hp_col1_r", "hp_col1_g", "hp_col1_b", 0.20, 1.0, 0.20), setColor("hp_col1_r", "hp_col1_g", "hp_col1_b")), 34, 30)
+                add(CreateColorButton(c, "74 - 50%", getColor("hp_col2_r", "hp_col2_g", "hp_col2_b", 1.0, 0.82, 0.0), setColor("hp_col2_r", "hp_col2_g", "hp_col2_b")), 34, 30)
+                add(CreateColorButton(c, "49 - 25%", getColor("hp_col3_r", "hp_col3_g", "hp_col3_b", 1.0, 0.50, 0.0), setColor("hp_col3_r", "hp_col3_g", "hp_col3_b")), 34, 30)
+                add(CreateColorButton(c, "24 - 0%", getColor("hp_col4_r", "hp_col4_g", "hp_col4_b", 1.0, 0.15, 0.15), setColor("hp_col4_r", "hp_col4_g", "hp_col4_b")), 34, 30)
+            else
+                add(CreateColorButton(c, "Couleur fixe", getColor("hpPercentTextR", "hpPercentTextG", "hpPercentTextB", 1, 1, 1), setColor("hpPercentTextR", "hpPercentTextG", "hpPercentTextB")), 34, 30)
+            end
+            add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpPercentTextA", 1), set("hpPercentTextA")), 34, 48)
+        end, 1)
+        section("Couleurs valeur HP", "lifeAbsoluteColors", function()
+            add(CreateCycle(c, "Mode", {
+                {value="fixed", label="Fixe"},
+                {value="dynamic", label="Dynamique"},
+            }, get("hp_absolute_color_mode", "fixed"), set("hp_absolute_color_mode")), 34, 32)
+            if self:GetCfgValue("hp_absolute_color_mode", "fixed") == "dynamic" then
+                add(CreateColorButton(c, "100 - 75%", getColor("hp_abs_col1_r", "hp_abs_col1_g", "hp_abs_col1_b", 0.20, 1.0, 0.20), setColor("hp_abs_col1_r", "hp_abs_col1_g", "hp_abs_col1_b")), 34, 30)
+                add(CreateColorButton(c, "74 - 50%", getColor("hp_abs_col2_r", "hp_abs_col2_g", "hp_abs_col2_b", 1.0, 0.82, 0.0), setColor("hp_abs_col2_r", "hp_abs_col2_g", "hp_abs_col2_b")), 34, 30)
+                add(CreateColorButton(c, "49 - 25%", getColor("hp_abs_col3_r", "hp_abs_col3_g", "hp_abs_col3_b", 1.0, 0.50, 0.0), setColor("hp_abs_col3_r", "hp_abs_col3_g", "hp_abs_col3_b")), 34, 30)
+                add(CreateColorButton(c, "24 - 0%", getColor("hp_abs_col4_r", "hp_abs_col4_g", "hp_abs_col4_b", 1.0, 0.15, 0.15), setColor("hp_abs_col4_r", "hp_abs_col4_g", "hp_abs_col4_b")), 34, 30)
+            else
+                add(CreateColorButton(c, "Couleur fixe", getColor("hpAbsoluteTextR", "hpAbsoluteTextG", "hpAbsoluteTextB", 1, 1, 1), setColor("hpAbsoluteTextR", "hpAbsoluteTextG", "hpAbsoluteTextB")), 34, 30)
+            end
+            add(CreateSlider(c, "Transparence", 0.1, 1, 0.05, get("hpAbsoluteTextA", 1), set("hpAbsoluteTextA")), 34, 48)
+        end, 2)
     elseif self.page == "target" then
         section("Cible", "targetMain", function()
             add(CreateCheck(c, "Personnalisation cible", get("target_custom_enabled", false), set("target_custom_enabled")), 34, 28)
@@ -3019,9 +3696,250 @@ function SP.UIPlumber:BuildSettings()
             add(CreateCheck(c, "Dragon elite", get("showEliteDragon", false), set("showEliteDragon")), 34, 28)
             add(CreateCheck(c, "Quetes", get("quest_enabled", true), set("quest_enabled")), 34, 28)
             add(CreateCheck(c, "Couleur nom quete", get("quest_color_name", true), set("quest_color_name")), 34, 28)
+            add(CreateCheck(c, "Son quete proche", get("quest_proximity_sound", false), set("quest_proximity_sound")), 34, 28)
+            if get("quest_proximity_sound", false)() then
+                add(CreateSlider(c, "Distance son quete", 5, 80, 1, get("quest_proximity_sound_distance", 30), set("quest_proximity_sound_distance")), 34, 48)
+                add(CreateSlider(c, "Cooldown global son", 2, 60, 1, get("quest_proximity_sound_cooldown", 12), set("quest_proximity_sound_cooldown")), 34, 48)
+                add(CreateSlider(c, "Cooldown par unite", 10, 300, 5, get("quest_proximity_sound_unit_cooldown", 75), set("quest_proximity_sound_unit_cooldown")), 34, 48)
+                add(CreateCheck(c, "Son aussi en combat", get("quest_proximity_sound_in_combat", false), set("quest_proximity_sound_in_combat")), 34, 28)
+                add(CreateCheck(c, "Ennemis seulement", get("quest_proximity_sound_enemies_only", true), set("quest_proximity_sound_enemies_only")), 34, 28)
+                add(CreateCheck(c, "Quetes actives seulement", get("quest_proximity_sound_active_only", true), set("quest_proximity_sound_active_only")), 34, 28)
+                add(CreateCycle(c, "Son", {
+                    {value="quest_item", label="Quete douce"},
+                }, get("quest_proximity_sound_id", "quest_item"), set("quest_proximity_sound_id")), 34, 32)
+                local testBtn = CreateFrame("Button", nil, c)
+                testBtn:SetSize(COLUMN_WIDTH - 68, 28)
+                local testBg = testBtn:CreateTexture(nil, "BACKGROUND")
+                testBg:SetAllPoints()
+                testBg:SetColorTexture(0.10, 0.07, 0.04, 0.92)
+                local testTxt = testBtn:CreateFontString(nil, "OVERLAY")
+                testTxt:SetFontObject(GameFontNormalSmall)
+                testTxt:SetPoint("CENTER")
+                testTxt:SetText("|cFF88CCFFTester le son|r")
+                testBtn:SetScript("OnClick", function()
+                    if SP.Quest and SP.Quest.TestSound then SP.Quest:TestSound(self:GetCfg()) end
+                end)
+                add(testBtn, 34, 30)
+            end
             add(CreateCheck(c, "Marques raid", get("raidmark_enabled", true), set("raidmark_enabled")), 34, 28)
             add(CreateCheck(c, "Indicateur combat", get("showCombatIndicator", true), set("showCombatIndicator")), 34, 28)
         end, 2)
+    elseif self.page == "resources" then
+        section("Ressources", "resourcesMain", function()
+            add(CreateCheck(c, "Afficher la barre de ressource", get("showPower", false), set("showPower")), 34, 28)
+            add(CreateSlider(c, "Decalage ressource Y", -80, 80, 1, get("powerOffsetY", 0), set("powerOffsetY")), 34, 48)
+            if self:GetUType() == "PLAYER_SELF" then
+                add(CreateCheck(c, "Afficher ressource de classe", get("class_power_enabled", true), set("class_power_enabled")), 34, 28)
+                add(CreateCheck(c, "Ressource dans Shadow Circle", get("moi_resource_ring_enabled", true), set("moi_resource_ring_enabled")), 34, 28)
+                if get("moi_resource_ring_enabled", true)() then
+                    add(CreateCycle(c, "Visibilite anneau", {
+                        {value="smart",  label="Combat + sorts"},
+                        {value="combat", label="Combat seulement"},
+                        {value="always", label="Toujours"},
+                    }, get("moi_resource_ring_visibility", "smart"), set("moi_resource_ring_visibility")), 34, 32)
+                    add(CreateCheck(c, "Demi-cercles multi-ressources", get("moi_resource_ring_split", true), set("moi_resource_ring_split")), 34, 28)
+                    add(CreateSlider(c, "Alpha anneau ressource", 0.00, 1.00, 0.02, get("moi_resource_ring_alpha", 0.86), set("moi_resource_ring_alpha")), 34, 48)
+                    add(CreateSlider(c, "Alpha minimum anneau", 0.00, 0.80, 0.02, get("moi_resource_ring_min_alpha", 0.10), set("moi_resource_ring_min_alpha")), 34, 48)
+                    add(CreateSlider(c, "Taille anneau ressource", 0.80, 1.60, 0.02, get("moi_resource_ring_scale", 1.08), set("moi_resource_ring_scale")), 34, 48)
+                end
+            end
+        end, 1)
+        section("Notes", "resourcesNotes", function()
+            local hint = Text(c, "La sphere Moi reutilise les ressources WoW du joueur; les valeurs protegees sont lues sans calcul Lua risqué.", 10, MUTED)
+            hint:SetWidth(COLUMN_WIDTH - 54)
+            hint:SetJustifyH("LEFT")
+            add(hint, 34, 44)
+        end, 2)
+    elseif self.page == "moi_behavior" then
+        if self:GetUType() ~= "PLAYER_SELF" then
+            section("Comportement Moi", "moiBehaviorUnavailable", function()
+                local hint = Text(c, "Les reactions de comportement concernent uniquement la sphere Moi.", 11, MUTED)
+                hint:SetWidth(COLUMN_WIDTH - 54)
+                hint:SetJustifyH("LEFT")
+                add(hint, 34, 36)
+            end, 1)
+        else
+            section("Ondulation Glow", "moiBehaviorMain", function()
+                add(CreateCheck(c, "Activer reactions Moi", get("moi_behavior_glow_enabled", true), set("moi_behavior_glow_enabled")), 34, 28)
+                add(CreateSlider(c, "Alpha ondulation", 0.00, 1.00, 0.02, get("moi_behavior_glow_alpha", 0.70), set("moi_behavior_glow_alpha")), 34, 48)
+                add(CreateSlider(c, "Taille ondulation", 1.05, 3.00, 0.05, get("moi_behavior_glow_size", 1.80), set("moi_behavior_glow_size")), 34, 48)
+                add(CreateSlider(c, "Cooldown reaction", 0.20, 10.00, 0.10, get("moi_behavior_glow_cooldown", 1.20), set("moi_behavior_glow_cooldown")), 34, 48)
+            end, 1)
+            section("Situations", "moiBehaviorCases", function()
+                add(CreateCheck(c, "Aggro", get("moi_behavior_glow_aggro", true), set("moi_behavior_glow_aggro")), 34, 28)
+                add(CreateCheck(c, "Cast de sort", get("moi_behavior_glow_cast", true), set("moi_behavior_glow_cast")), 34, 28)
+                add(CreateCheck(c, "Vie basse", get("moi_behavior_glow_lowhp", true), set("moi_behavior_glow_lowhp")), 34, 28)
+                add(CreateSlider(c, "Seuil vie basse", 5, 80, 1, get("moi_behavior_lowhp_threshold", 35), set("moi_behavior_lowhp_threshold")), 34, 48)
+                add(CreateCheck(c, "Soins recus", get("moi_behavior_glow_heal", true), set("moi_behavior_glow_heal")), 34, 28)
+                add(CreateCheck(c, "Fear / stun / controle", get("moi_behavior_glow_cc", true), set("moi_behavior_glow_cc")), 34, 28)
+            end, 2)
+        end
+    elseif self.page == "position" then
+        if self:GetUType() == "PLAYER_SELF" then
+            section("Position Moi", "moiPosition", function()
+                add(CreateSlider(c, "Position X", -900, 900, 1, getDB("moi_x", -280), setDB("moi_x")), 34, 48)
+                add(CreateSlider(c, "Position Y", -600, 600, 1, getDB("moi_y", -170), setDB("moi_y")), 34, 48)
+                add(CreateSlider(c, "Echelle", 0.50, 2.00, 0.05, getDB("moi_scale", 1.0), setDB("moi_scale")), 34, 48)
+                add(CreateCheck(c, "Verrouiller position", getDB("moi_locked", false), setDB("moi_locked")), 34, 28)
+            end, 1)
+            section("Placement interne", "moiInnerPosition", function()
+                add(CreateSlider(c, "Decalage orbe X", -200, 200, 1, get("offsetX", 0), set("offsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage orbe Y", -200, 200, 1, get("offsetY", 0), set("offsetY")), 34, 48)
+                add(CreateSlider(c, "Decalage nom X", -80, 80, 1, get("nameOffsetX", 0), set("nameOffsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage nom Y", -80, 80, 1, get("nameOffsetY", 6), set("nameOffsetY")), 34, 48)
+                add(CreateSlider(c, "Decalage HP X", -80, 80, 1, get("hpTextOffsetX", 0), set("hpTextOffsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage HP Y", -80, 80, 1, get("hpTextOffsetY", 0), set("hpTextOffsetY")), 34, 48)
+            end, 2)
+        else
+            section("Position nameplates", "platePosition", function()
+                add(CreateSlider(c, "Decalage orbe X", -200, 200, 1, get("offsetX", 0), set("offsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage orbe Y", -200, 200, 1, get("offsetY", 0), set("offsetY")), 34, 48)
+                add(CreateSlider(c, "Decalage nom X", -80, 80, 1, get("nameOffsetX", 0), set("nameOffsetX")), 34, 48)
+                add(CreateSlider(c, "Decalage nom Y", -80, 80, 1, get("nameOffsetY", 6), set("nameOffsetY")), 34, 48)
+            end, 1)
+        end
+    elseif self.page == "actionbars" then
+        if self:GetUType() ~= "PLAYER_SELF" then
+            section("Barres d'actions", "actionbarsUnavailable", function()
+                local hint = Text(c, "Les barres d'actions personnelles sont disponibles dans le menu Moi.", 11, MUTED)
+                hint:SetWidth(COLUMN_WIDTH - 54)
+                hint:SetJustifyH("LEFT")
+                add(hint, 34, 36)
+            end, 1)
+        else
+            local root = SP.ActionBars and SP.ActionBars:EnsureDefaults() or (SP.db and SP.db.actionbars) or {}
+            local bars = root.bars or {}
+            local selected = tonumber(root.selected) or 1
+            if selected < 1 then selected = 1 elseif selected > 8 then selected = 8 end
+            local cfgBar = bars[selected] or {}
+            local function refreshAB()
+                if SP.ActionBars and SP.ActionBars.Refresh then
+                    pcall(SP.ActionBars.Refresh, SP.ActionBars)
+                end
+            end
+            local function getRoot(k, def)
+                return function()
+                    if root[k] ~= nil then return root[k] end
+                    return def
+                end
+            end
+            local function setRoot(k)
+                return function(v)
+                    root[k] = v
+                    if k == "enabled" and v == true then
+                        root.replaceBlizzard = true
+                        root.hideBlizzard = true
+                    end
+                    refreshAB()
+                end
+            end
+            local function getBar(k, def)
+                return function()
+                    if cfgBar[k] ~= nil then return cfgBar[k] end
+                    return def
+                end
+            end
+            local function setBar(k)
+                return function(v)
+                    cfgBar[k] = v
+                    refreshAB()
+                end
+            end
+            local barOptions = {}
+            for i = 1, 8 do barOptions[#barOptions + 1] = {value=i, label="Barre " .. i} end
+
+            section("Barres d'actions", "actionbarsMain", function()
+                add(CreateCheck(c, "Activer les barres SNP", getRoot("enabled", false), setRoot("enabled")), 34, 28)
+                add(CreateCheck(c, "Remplacer les barres Blizzard", getRoot("replaceBlizzard", true), setRoot("replaceBlizzard")), 34, 28)
+                add(CreateCheck(c, "Mode edition SNP", getDB("snp_edit_mode", false), function(v)
+                    if SP.ActionBars and SP.ActionBars.SetEditMode then
+                        pcall(SP.ActionBars.SetEditMode, SP.ActionBars, v == true, false)
+                    else
+                        setDB("snp_edit_mode")(v)
+                    end
+                end), 34, 28)
+                add(CreateCheck(c, "Verrouiller les boutons", getRoot("lock", true), setRoot("lock")), 34, 28)
+                add(CreateCycle(c, "Barre a configurer", barOptions, function() return selected end, function(v)
+                    root.selected = v
+                    self:BuildSettings()
+                end), 34, 32)
+            end, 1)
+
+            section("Barre " .. selected .. " - Base", "actionbarBase" .. selected, function()
+                add(CreateCheck(c, "Activer cette barre", getBar("enabled", selected == 1), setBar("enabled")), 34, 28)
+                add(CreateSlider(c, "Nombre de boutons", 1, 12, 1, getBar("buttons", 12), setBar("buttons")), 34, 48)
+                if selected == 1 then
+                    add(CreateCheck(c, "Suivre page native WoW", getBar("followPaging", true), setBar("followPaging")), 34, 28)
+                elseif cfgBar.followPaging == true then
+                    cfgBar.followPaging = false
+                end
+                if selected ~= 1 or not getBar("followPaging", selected == 1)() then
+                    add(CreateSlider(c, "Premier slot action", 1, 180, 1, getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
+                end
+                add(CreateCheck(c, "Clic au press", getBar("clickOnDown", false), setBar("clickOnDown")), 34, 28)
+            end, 2)
+
+            section("Layout", "actionbarLayout" .. selected, function()
+                add(CreateCycle(c, "Orientation", {
+                    {value="horizontal", label="Horizontale"},
+                    {value="vertical", label="Verticale"},
+                    {value="grid", label="Grille"},
+                }, getBar("orientation", "horizontal"), setBar("orientation")), 34, 32)
+                if getBar("orientation", "horizontal")() == "grid" then
+                    add(CreateSlider(c, "Colonnes", 1, 12, 1, getBar("columns", 6), setBar("columns")), 34, 48)
+                end
+                add(CreateSlider(c, "Taille boutons", 20, 72, 1, getBar("size", 36), setBar("size")), 34, 48)
+                add(CreateSlider(c, "Espacement", 0, 16, 1, getBar("spacing", 4), setBar("spacing")), 34, 48)
+                add(CreateSlider(c, "Echelle", 0.50, 2.00, 0.05, getBar("scale", 1.0), setBar("scale")), 34, 48)
+            end, 1)
+
+            section("Position", "actionbarPosition" .. selected, function()
+                add(CreateSlider(c, "Position X", -1000, 1000, 1, getBar("x", 0), setBar("x")), 34, 48)
+                add(CreateSlider(c, "Position Y", -700, 700, 1, getBar("y", -300), setBar("y")), 34, 48)
+            end, 2)
+
+            section("Affichage", "actionbarVisibility" .. selected, function()
+                add(CreateCycle(c, "Mode affichage", {
+                    {value="always", label="Toujours"},
+                    {value="combat", label="Combat"},
+                    {value="nocombat", label="Hors combat"},
+                    {value="target", label="Cible"},
+                    {value="combat_target", label="Combat/cible"},
+                    {value="mouseover", label="Survol"},
+                    {value="combatfade", label="Fondu hors combat"},
+                    {value="hidden", label="Cachee"},
+                }, getBar("visibility", "always"), setBar("visibility")), 34, 32)
+                add(CreateSlider(c, "Alpha", 0.05, 1.00, 0.05, getBar("alpha", 1.0), setBar("alpha")), 34, 48)
+                add(CreateSlider(c, "Alpha inactive", 0.00, 1.00, 0.05, getBar("inactiveAlpha", 0.25), setBar("inactiveAlpha")), 34, 48)
+                add(CreateSlider(c, "Zoom survol", 1.00, 1.50, 0.02, getBar("hoverScale", 1.08), setBar("hoverScale")), 34, 48)
+            end, 1)
+
+            section("Style des boutons", "actionbarButtonSkin" .. selected, function()
+                add(CreateCycle(c, "Style decoratif", {
+                    {value="shadowcircle", label="Shadow Circle"},
+                    {value="none", label="Aucun"},
+                }, getBar("buttonSkin", "shadowcircle"), setBar("buttonSkin")), 34, 32)
+                if getBar("buttonSkin", "shadowcircle")() == "shadowcircle" then
+                    add(CreateSlider(c, "Alpha Shadow Circle", 0.00, 1.00, 0.05, getBar("skinAlpha", 0.95), setBar("skinAlpha")), 34, 48)
+                    add(CreateCheck(c, "Assombrir en recharge", getBar("cooldownShade", true), setBar("cooldownShade")), 34, 28)
+                    if getBar("cooldownShade", true)() ~= false then
+                        add(CreateSlider(c, "Force assombrissement", 0.00, 1.00, 0.05, getBar("cooldownShadeAlpha", 0.62), setBar("cooldownShadeAlpha")), 34, 48)
+                        add(CreateCheck(c, "Rotation sur temps recharge", getBar("cooldownRingSpin", true), setBar("cooldownRingSpin")), 34, 28)
+                    end
+                end
+            end, 2)
+
+            section("Texte et cooldowns", "actionbarText" .. selected, function()
+                add(CreateCheck(c, "Afficher boutons vides", getBar("showEmpty", true), setBar("showEmpty")), 34, 28)
+                if getBar("showEmpty", true)() then
+                    add(CreateSlider(c, "Alpha emplacements vides", 0.00, 1.00, 0.05, getBar("emptyAlpha", 0.00), setBar("emptyAlpha")), 34, 48)
+                end
+                add(CreateCheck(c, "Afficher raccourcis", getBar("showHotkey", true), setBar("showHotkey")), 34, 28)
+                add(CreateCheck(c, "Afficher quantites", getBar("showCount", true), setBar("showCount")), 34, 28)
+                add(CreateCheck(c, "Afficher nom macro", getBar("showMacro", false), setBar("showMacro")), 34, 28)
+                add(CreateCheck(c, "Afficher cooldown", getBar("showCooldown", true), setBar("showCooldown")), 34, 28)
+            end, 2)
+        end
     end
 
     c:SetHeight(math.max((win.scroll and win.scroll.visibleHeight) or 340, math.max(-colY[1], -colY[2]) + 16))
@@ -3031,56 +3949,147 @@ end
 function SP.UIPlumber:RefreshHeader()
     local win = self.win
     if not win then return end
-    local special = IsSpecialCategory(self.category)
+    local family = self:GetFamily()
+    self.family = family
 
     if win.topButtons then
-        local entry = self:GetUnitEntry()
         for key, b in pairs(win.topButtons) do
             b:Show()
-            if key == "player" then
-                b:SetSelected((not special) and entry.kind == "player")
-            elseif key == "npc" then
-                b:SetSelected((not special) and entry.kind == "npc")
-            else
-                b:SetSelected(self.category == key)
-            end
+            b:SetSelected(key == family)
         end
     end
 
-    if special then
-        if win.unitMenu then win.unitMenu:Hide() end
-        if win.select then win.select:Hide() end
-        for _, b in pairs(win.catButtons or {}) do b:Hide() end
-        for _, b in pairs(win.pageButtons or {}) do b:Hide() end
-        local entry = self:GetUnitEntry()
-        win.status:SetText(entry.title .. "  |  " .. (self.category == "logs" and "journal" or self.category == "modules" and "performance" or "comportement"))
-        return
+    if win.unitMenu then win.unitMenu:Hide() end
+    for _, b in pairs(win.pageButtons or {}) do b:Hide() end
+    for _, b in pairs(win.specialButtons or {}) do b:Hide() end
+
+    local entry = self:GetUnitEntry()
+    local showContext = family == "nameplates" or family == "unitframes"
+    local showSideNav = family ~= "modules"
+    if win.sideNav then win.sideNav:SetShown(showSideNav) end
+    if win.contextTitle then
+        win.contextTitle:Hide()
+        win.contextTitle:SetText(family == "unitframes" and "UnitFrame" or "Contexte")
+    end
+    if win.pagesTitle then
+        win.pagesTitle:Hide()
+        win.pagesTitle:SetText((family == "interface" or family == "spdebug") and "Sections" or "Pages")
+        win.pagesTitle:ClearAllPoints()
+        if showContext and win.contextAlt then
+            win.pagesTitle:SetPoint("TOPLEFT", win.contextAlt, "BOTTOMLEFT", 0, -16)
+        else
+            win.pagesTitle:SetPoint("TOPLEFT", win.sideNav, "TOPLEFT", 24, -26)
+        end
+    end
+    if win.contextButton then win.contextButton:SetShown(showContext) end
+    if win.contextAlt then win.contextAlt:SetShown(showContext) end
+
+    if family == "nameplates" then
+        if win.contextButton and win.contextButton.label then
+            win.contextButton.label:SetText(entry.kind == "player" and "Joueurs" or "PNJ")
+        end
+        if win.contextAlt then
+            win.contextAlt:SetText(self.category == "neutral" and "PNJ uniquement" or (entry.kind == "player" and "PNJ" or "Joueurs"))
+        end
+    elseif family == "unitframes" then
+        if win.contextButton and win.contextButton.label then win.contextButton.label:SetText("Moi") end
+        if win.contextAlt then win.contextAlt:SetText("Cible / Cible de la cible bientot") end
     end
 
-    if win.select then win.select:Hide() end
-    for _, b in pairs(win.pageButtons or {}) do b:Show() end
-    local list = UNIT_BY_CATEGORY[self.category] or UNIT_BY_CATEGORY.enemy
-    if #list <= 1 then
-        self.unitKind[self.category] = list[1].kind
-        if win.unitMenu then win.unitMenu:Hide() end
+    local function pageAllowed(key)
+        if family == "nameplates" then
+            return key == "sphere" or key == "text" or key == "life" or key == "castbar"
+                or key == "auras" or key == "target" or key == "effects" or key == "position"
+        elseif family == "unitframes" then
+            return key == "sphere" or key == "text" or key == "life" or key == "resources"
+                or key == "castbar" or key == "auras" or key == "moi_behavior"
+                or key == "position" or key == "actionbars"
+        end
+        return false
     end
-    local entry = self:GetUnitEntry()
+
+    if family == "interface" then
+        for _, b in pairs(win.catButtons or {}) do b:Hide() end
+        if win.pageContainer then
+            win.pageContainer:ClearAllPoints()
+            win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -22)
+        end
+        local idx = 0
+        for _, item in ipairs(OPTIONS_NAV) do
+            local b = win.specialButtons and win.specialButtons["interface_" .. item.key]
+            if b then
+                idx = idx + 1
+                b:ClearAllPoints()
+                b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
+                if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
+                b:SetShown(true)
+                b:SetSelected((self.optionsPage or "general") == item.key)
+            end
+        end
+        win.status:SetText("Interface  |  options globales")
+        return
+    elseif family == "modules" then
+        for _, b in pairs(win.catButtons or {}) do b:Hide() end
+        win.status:SetText("Modules  |  etat et activation")
+        return
+    elseif family == "spdebug" then
+        for _, b in pairs(win.catButtons or {}) do b:Hide() end
+        if win.pageContainer then
+            win.pageContainer:ClearAllPoints()
+            win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -22)
+        end
+        local idx = 0
+        for _, item in ipairs(SPDEBUG_NAV) do
+            local b = win.specialButtons and win.specialButtons["spdebug_" .. item.key]
+            if b then
+                idx = idx + 1
+                b:ClearAllPoints()
+                b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
+                if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
+                b:SetShown(true)
+                b:SetSelected((self.spdebugPage or "overview") == item.key)
+            end
+        end
+        win.status:SetText("SPDebug  |  diagnostic")
+        return
+    end
 
     local last
     for _, cat in ipairs(CATEGORY) do
         if not IsSpecialCategory(cat.key) then
             local b = win.catButtons and win.catButtons[cat.key]
             if b then
-                local visible = not (entry.kind == "player" and cat.key == "neutral")
+                local visible = family == "nameplates"
                 b:SetShown(visible)
                 b:ClearAllPoints()
                 if visible then
                     if last then b:SetPoint("LEFT", last, "RIGHT", 18, 0)
-                    else b:SetPoint("TOPLEFT", win.header, "TOPLEFT", 36, -38) end
+                    else b:SetPoint("TOPLEFT", win.header, "TOPLEFT", 36, -44) end
                     b:SetSelected(cat.key == self.category)
                     last = b
                 end
             end
+        end
+    end
+
+    if family == "nameplates" and self.category == "neutral" then
+        self.unitKind.neutral = "npc"
+    end
+    if not pageAllowed(self.page) then self.page = "sphere" end
+    if win.pageContainer then
+        win.pageContainer:ClearAllPoints()
+        win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -92)
+    end
+    local idx = 0
+    for _, page in ipairs(PAGES) do
+        local b = win.pageButtons and win.pageButtons[page.key]
+        if b and pageAllowed(page.key) then
+            idx = idx + 1
+            b:ClearAllPoints()
+            b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
+            if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
+            b:SetShown(true)
+            b:SetSelected(self.page == page.key)
         end
     end
 
@@ -3462,6 +4471,87 @@ end
 
 -- ── Open / Close ─────────────────────────────────────────────────────────────
 
+function SP.UIPlumber:ToggleUILab()
+    if self._uiLab and self._uiLab:IsShown() then
+        self._uiLab:Hide()
+        return
+    end
+    if not self._uiLab then
+        local f = CreateFrame("Frame", "SphereNameplatesPSUILab", UIParent, "BackdropTemplate")
+        f:SetSize(430, 590)
+        f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        f:SetFrameStrata("DIALOG")
+        f:SetFrameLevel(700)
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        f:SetBackdrop({bgFile="Interface\\ChatFrame\\ChatFrameBackground", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", edgeSize=12, insets={left=3,right=3,top=3,bottom=3}})
+        f:SetBackdropColor(0.012, 0.010, 0.008, 0.94)
+        f:SetBackdropBorderColor(0.58, 0.40, 0.18, 0.95)
+
+        local title = Text(f, "PSUI LAB", 16, GOLD)
+        title:SetPoint("TOPLEFT", f, "TOPLEFT", 18, -16)
+        local close = CreateCloseButton(f)
+        close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
+        close:SetScript("OnClick", function() f:Hide() end)
+
+        local dd = CreatePanelButton(f, "Joueurs", function() end)
+        dd:SetSize(292, 30)
+        dd:SetPoint("TOP", f, "TOP", 0, -52)
+        if dd.left then dd.left:SetAlpha(0) end
+        if dd.center then dd.center:SetAlpha(0) end
+        if dd.right then dd.right:SetAlpha(0) end
+        dd.skin = dd:CreateTexture(nil, "BACKGROUND")
+        dd.skin:SetAllPoints()
+        SafeTexture(dd.skin, PSUI_TEX .. "psui_dropdown.png")
+        dd.label:ClearAllPoints()
+        dd.label:SetPoint("LEFT", dd, "LEFT", 28, 0)
+        dd.label:SetJustifyH("LEFT")
+        dd.arrow = Text(dd, "v", 11, GOLD)
+        dd.arrow:SetPoint("RIGHT", dd, "RIGHT", -14, 0)
+
+        local holder = CreateFrame("Frame", nil, f)
+        holder:SetSize(292, 430)
+        holder:SetPoint("TOP", dd, "BOTTOM", 0, -30)
+        holder:SetFrameLevel(f:GetFrameLevel() + 10)
+        f.buttons = {}
+        local labPages = {
+            {key="sphere", label="Sphere"},
+            {key="text", label="Texte"},
+            {key="life", label="Vie"},
+            {key="castbar", label="Cast"},
+            {key="auras", label="Auras"},
+            {key="target", label="Ciblage"},
+            {key="effects", label="Effets"},
+            {key="position", label="Position"},
+        }
+        for i, page in ipairs(labPages) do
+            local ok, b = pcall(CreateSideNavButton, holder, page.label, SIDE_ICONS[page.key], function(btn)
+                for _, other in ipairs(f.buttons) do other:SetSelected(other == btn) end
+            end)
+            if not ok then
+                local errText = Text(holder, "CreateSideNavButton erreur: " .. tostring(b), 10, {1.0, 0.25, 0.20})
+                errText:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, -((i - 1) * 50))
+                errText:SetWidth(280)
+                errText:SetJustifyH("LEFT")
+                break
+            end
+            b:SetPoint("TOP", holder, "TOP", 0, -((i - 1) * 50))
+            b:SetSelected(i == 1)
+            table.insert(f.buttons, b)
+        end
+
+        local note = Text(f, "Si cette liste est propre mais la fenetre principale non, le bug est layout/FrameLevel.", 10, MUTED)
+        note:SetPoint("BOTTOM", f, "BOTTOM", 0, 18)
+        note:SetWidth(360)
+        note:SetJustifyH("CENTER")
+        self._uiLab = f
+    end
+    self._uiLab:Show()
+end
+
 function SP.UIPlumber:Open()
     if not self.win then
         local ok, err = SafeCall(self.BuildWindow, self)
@@ -3470,6 +4560,19 @@ function SP.UIPlumber:Open()
             return
         end
     end
+    local uiW = UIParent and UIParent:GetWidth() or 1460
+    local uiH = UIParent and UIParent:GetHeight() or 720
+    local fit = math.min(1, (uiW - 40) / 1180, (uiH - 40) / 720)
+    if fit > 0 and fit < 1 then
+        self.win:SetScale(fit)
+    else
+        self.win:SetScale(1)
+    end
+    self.win:ClearAllPoints()
+    -- WoW UI scale can make UIParent's logical center differ from the visible
+    -- pixel center. A top anchor keeps the editor readable and prevents the
+    -- lower controls from opening below the viewport.
+    self.win:SetPoint("TOP", UIParent, "TOP", -380, -42)
     self.win:Show()
     local ok, err = SafeCall(self.RefreshAll, self)
     if not ok then

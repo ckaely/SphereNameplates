@@ -1800,13 +1800,13 @@ SP.DEFAULTS = { profile = {
         moi_resource_ring_split=true,
         moi_resource_ring_scale=1.08,
         moi_resource_ring_min_alpha=0.10,
-        -- "smart" = visible en combat ou pendant ~5s après un sort; "combat" = combat seul; "always" = toujours
-        moi_resource_ring_visibility="smart",
+        -- "always" (défaut) = toujours visible; "smart" = combat ou ~5s après un sort; "combat" = combat seul
+        moi_resource_ring_visibility="always",
         -- Arc XP / réputation autour de la sphère (Lot D)
         moi_xp_ring_enabled=true,
         moi_xp_ring_mode="auto",      -- auto | xp | reputation | hidden
         moi_xp_ring_alpha=0.75,
-        moi_xp_ring_scale=1.22,
+        moi_xp_ring_scale=1.10,       -- collé à l'orbe, juste au-dessus de l'anneau ressource
         moi_behavior_glow_enabled=true,
         moi_behavior_glow_aggro=true,
         moi_behavior_glow_cast=true,

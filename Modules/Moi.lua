@@ -91,6 +91,22 @@ function M:EnsureSavedDefaults()
             db.moi_shadowcircle_migrated = 1
         end
     end
+    -- Migration one-shot : anneau ressource visible par défaut ("smart" était
+    -- trop discret — les joueurs croyaient l'anneau cassé) + anneau XP
+    -- recalibré fin/collé à l'orbe (1.22 → 1.10).
+    if db.moi_ring_defaults_migrated ~= 1 then
+        local cfg = SP.db and SP.db.PLAYER_SELF
+        if cfg then
+            if cfg.moi_resource_ring_visibility == "smart" then
+                cfg.moi_resource_ring_visibility = "always"
+            end
+            local s = tonumber(cfg.moi_xp_ring_scale)
+            if s == nil or math.abs(s - 1.22) < 0.001 then
+                cfg.moi_xp_ring_scale = 1.10
+            end
+            db.moi_ring_defaults_migrated = 1
+        end
+    end
 end
 
 function M:ShouldShow()
@@ -395,7 +411,9 @@ end
 function M:EnsureResourceRing(data)
     if not data or not data.root or data.moiResourceRing then return end
     local holder = CreateFrame("Frame", nil, data.root)
-    holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 28)
+    -- root+30 : PREMIER PLAN — au-dessus de la bordure (root+8), des textes
+    -- (root+9) et du nameFrame (root+13). Les auras passent à root+34.
+    holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 30)
     holder:SetPoint("CENTER", data.orbFrame or data.root, "CENTER")
 
     -- Piste sombre : rend la portion NON remplie lisible et distingue
@@ -564,11 +582,21 @@ function M:UpdateResourceRing()
         self:SetHemisphereRaw(ring.right, rawCur, rawMax, pr, pg, pb, math.max(minAlpha, alpha))
     end
 
-    -- Visibilité par fondu : la cible d'alpha est lissée dans TickBehavior.
+    -- Visibilité : JAMAIS dépendante du tick de fondu — TickBehavior passe
+    -- par TickHealth qui peut être bloqué (targetHP secret/indisponible) →
+    -- l'anneau resterait à alpha 0 pour toujours. Affichage immédiat ici;
+    -- TickBehavior ne fait que lisser quand il tourne.
     ring._targetAlpha = self:IsResourceActive(cfg) and 1 or 0
-    if ring._targetAlpha > 0 or (ring.holder:GetAlpha() or 0) > 0.02 then
+    local cur = ring.holder:GetAlpha() or 0
+    if ring._targetAlpha > 0 then
+        if cur < 0.05 then ring.holder:SetAlpha(1) end
+        ring.holder:Show()
+    elseif cur > 0.02 then
+        -- Fade-out : pas de tick garanti → step manuel à chaque update/poll
+        ring.holder:SetAlpha(math.max(0, cur - 0.34))
         ring.holder:Show()
     else
+        ring.holder:SetAlpha(0)
         ring.holder:Hide()
     end
 end

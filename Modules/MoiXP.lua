@@ -122,9 +122,14 @@ end
 -- sombre rend la portion restante lisible. Rested = remplissage translucide
 -- en avance, sous le fill principal.
 
+-- Texture de l'anneau XP : ping4 = CERCLE FIN ET NET (pas le shadow circle
+-- épais/flou réservé à la bordure de classe et à l'anneau ressource).
+-- Distinction visuelle immédiate : XP = trait fin, ressources = anneau épais.
+local XP_RING_TEX = "Interface\\Cooldown\\ping4"
+
 local function MakeRingLayer(holder, sub)
     local tex = holder:CreateTexture(nil, "ARTWORK", nil, sub)
-    tex:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    tex:SetTexture(XP_RING_TEX)
     tex:SetBlendMode("ADD")
     local mask = holder:CreateMaskTexture()
     mask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
@@ -153,15 +158,16 @@ function X:EnsureRing()
 
     -- Sphère reconstruite (changement de taille) : on recrée sur le nouveau root.
     local holder = CreateFrame("Frame", nil, data.root)
-    holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 27)
+    -- root+31 : PREMIER PLAN, juste au-dessus de l'anneau ressource (+30).
+    holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 31)
     holder:SetPoint("CENTER", data.orbFrame, "CENTER")
 
-    -- Piste sombre : anneau complet discret (la portion non gagnée)
+    -- Piste : cercle fin discret (la révolution complète, portion non gagnée)
     local track = holder:CreateTexture(nil, "ARTWORK", nil, 2)
-    track:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
-    track:SetBlendMode("BLEND")
-    track:SetVertexColor(0.05, 0.05, 0.08, 1)
-    track:SetAlpha(0.55)
+    track:SetTexture(XP_RING_TEX)
+    track:SetBlendMode("ADD")
+    track:SetVertexColor(0.30, 0.28, 0.38, 1)
+    track:SetAlpha(0.22)
 
     local rested = MakeRingLayer(holder, 3)   -- avance rested, sous le fill
     local fill   = MakeRingLayer(holder, 4)   -- progression principale

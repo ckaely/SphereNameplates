@@ -88,6 +88,18 @@ local function ReadAuraField(aura, key)
     return nil
 end
 
+local function BuildAuraKey(aura, auraType)
+    if not aura then return nil end
+    local auraID = SafeAuraNumber(ReadAuraField(aura, "auraInstanceID"))
+    if auraID then return "id:" .. tostring(auraID) end
+    local spellID = SafeAuraNumber(ReadAuraField(aura, "spellId"))
+    if spellID then
+        local source = SafeString(ReadAuraField(aura, "sourceUnit")) or ""
+        return tostring(auraType or "aura") .. ":spell:" .. tostring(spellID) .. ":" .. source
+    end
+    return nil
+end
+
 local function SafeIsNil(v)
     local ok, result = pcall(function() return v == nil end)
     return ok and result or false
@@ -261,8 +273,8 @@ SP.Auras.FetchAuras = FetchAuras
 local pool = {}
 local CIRCLE_MASK_AURA = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 
-local function AcquireIcon(parent)
-    local f = table.remove(pool)
+local function AcquireIcon(parent, forceNew)
+    local f = (not forceNew) and table.remove(pool) or nil
     if not f then
         -- Créer un nouveau frame d'icône
         -- Guard combat : CreateFrame interdit en InCombatLockdown (génère un taint en cascade).
@@ -271,6 +283,10 @@ local function AcquireIcon(parent)
             return nil  -- échouer gracieusement, pas d'icône ce cycle
         end
         f = CreateFrame("Frame", nil, parent)
+        if SP.SPDebug then
+            SP.SPDebug:Count("Auras.Pool", "frames", 2)
+            SP.SPDebug:Count("Auras.Pool", "textures", 4)
+        end
         f:SetSize(24, 24)
 
         -- Masque circulaire — appliqué sur le frame lui-même (comme Nameplates addon)
@@ -363,6 +379,9 @@ local function ReleaseIcon(f)
     f._isCc    = nil
     f._ccExpiry= nil
     f._segment = nil
+    f._stableKey = nil
+    f._cdFallbackKey = nil
+    f._cdFallbackActive = nil
     if f.count  then f.count:SetText("") end
     if f.timer  then f.timer:SetText(""); f.timer:Hide() end
     if f.border then f.border:SetAlpha(0) end
@@ -530,25 +549,44 @@ local function UpdateAuraIcon(icon, auraData, auraType, cfg)
         icon.count:SetText(countStr)
     end
 
-    -- Cooldown swipe — utilise les valeurs BRUTES (duration, expTime) au lieu de
-    -- UntaintNum'd (dur, exp). Raison : en WoW Midnight 12.x, UntaintNum utilise
-    -- SetFormattedText sur un FontString enfant de UIParent ; depuis un contexte
-    -- d'exécution tainted (nameplate en combat), cet appel throw → UntaintNum retourne
-    -- nil → guard "dur and exp" échoue → cooldown et timer désactivés.
-    -- Solution : passer les valeurs brutes directement à SetCooldown (API C-side qui
-    -- accepte les secret numbers nativement). Toute arithmétique Lua est dans le pcall
-    -- pour capturer les throws si les valeurs sont effectivement tainted.
+    -- Cooldown swipe : chemin lisible avec dur/exp convertis; si Midnight expose
+    -- duration/expirationTime en secret numbers, on démarre une animation C-side
+    -- approximative une seule fois par aura stable au lieu de Clear/Set en boucle.
     if icon.cd then
         local showCd = false
         if AuraSetting(cfg, auraType, "timer", nil, true)
            and duration ~= nil and expTime ~= nil then
-            pcall(function()
-                local remaining = expTime - GetTime()
-                if remaining > 0 and duration > 0 then
-                    icon.cd:SetCooldown(expTime - duration, duration)
+            if dur and exp then
+                pcall(function()
+                    local remaining = exp - GetTime()
+                    if remaining > 0 and dur > 0 then
+                        icon.cd:SetCooldown(exp - dur, dur)
+                        icon.cd:Show()
+                        icon._cdFallbackActive = nil
+                        showCd = true
+                    end
+                end)
+            end
+            if not showCd then
+                local key = icon._stableKey or icon.auraID
+                if icon._cdFallbackKey == key and icon._cdFallbackActive then
                     icon.cd:Show()
                     showCd = true
+                else
+                    pcall(function()
+                        icon.cd:SetCooldown(GetTime(), duration)
+                        icon.cd:Show()
+                        icon._cdFallbackKey = key
+                        icon._cdFallbackActive = true
+                        showCd = true
+                    end)
                 end
+            end
+        end
+        if not showCd then
+            pcall(function()
+                icon._cdFallbackActive = nil
+                icon._cdFallbackKey = nil
             end)
         end
         if not showCd then
@@ -732,6 +770,19 @@ local function RepositionIcons(data)
         data._ringAuraCount = 0
         ClearSegmentSlots(data)
         return
+    end
+
+    -- Frame level des icônes : les frames poolées sortent avec un FL bas
+    -- (sous borderOverlayFrame root+8 → cachées par le shadow circle).
+    -- Nameplates : +14 (au-dessus bordure/textes). UnitFrames : +34 (au-dessus
+    -- aussi des anneaux ressource +30 et XP +31).
+    local rootFL = (data.root and data.root:GetFrameLevel()) or 10
+    local lift = data._isUnitFrame and 34 or 14
+    for i = 1, n do
+        local ic = icons[i]
+        if ic and ic.SetFrameLevel then
+            pcall(ic.SetFrameLevel, ic, rootFL + lift)
+        end
     end
 
     local orbRadius = (data.orbSize or 64) * 0.5
@@ -977,6 +1028,7 @@ function SP.Auras:SimulateAuras(data)
 end
 
 function SP.Auras:UpdateUnit(data, unit, updateInfo)
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
     local cfg = SP:GetCfg(data.unitType)
     if not cfg.auras_enabled then
         SP.Auras:RemoveAll(data)
@@ -999,8 +1051,49 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
     local maxDebuff = cfg.auras_maxDebuff or 5
     local maxBuff   = cfg.auras_maxBuff   or 3
 
-    -- Full scan systématique (delta désactivé — données tainted en WoW Midnight)
-    SP.Auras:RemoveAll(data)
+    -- Full scan systématique, mais sans jeter les frames stables : les Cooldown
+    -- gardent leur animation au lieu d'être Clear/Set plusieurs fois par seconde.
+    local oldIcons = data.auraIcons or {}
+    local oldByKey = {}
+    for _, ic in ipairs(oldIcons) do
+        if ic._stableKey then
+            oldByKey[ic._stableKey] = ic
+        else
+            ReleaseIcon(ic)
+        end
+    end
+    data.auraIcons = {}
+    data.auraMap = {}
+    data._ringAuraCount = 0
+    ClearSegmentSlots(data)
+
+    local function AcquireStableIcon(aura, auraType)
+        local key = BuildAuraKey(aura, auraType)
+        local ic = key and oldByKey[key] or nil
+        if ic then
+            oldByKey[key] = nil
+            ic:SetParent(data.root)
+            ic:ClearAllPoints()
+            ic:Hide()
+            ic.auraID = nil
+            ic.auraType = nil
+            ic._isCc = nil
+            ic._ccExpiry = nil
+            ic._segment = nil
+        else
+            ic = AcquireIcon(data.root)
+        end
+        if ic then
+            ic._stableKey = key
+        end
+        return ic, key
+    end
+
+    local function ReleaseUnusedStableIcons()
+        for _, ic in pairs(oldByKey) do
+            ReleaseIcon(ic)
+        end
+    end
 
     if (cfg.auras_mode or "icons") == "segments" then
         local candidates = {}
@@ -1047,7 +1140,7 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
 
         for i = 1, math.min(5, #candidates) do
             local cand = candidates[i]
-            local ic = AcquireIcon(data.root)
+            local ic = AcquireStableIcon(cand.aura, cand.auraType)
             if not ic then break end  -- pool vide en combat : stop l'allocation
             UpdateAuraIcon(ic, cand.aura, cand.auraType, cfg)
             ic.auraType = cand.auraType
@@ -1071,6 +1164,10 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
             end
         end
         pcall(SP.Orb.UpdateCC, SP.Orb, data, ccExpiry)
+        ReleaseUnusedStableIcons()
+        if _spdbgT0 and SP.SPDebug then
+            SP.SPDebug:Track("Auras.UpdateUnit", debugprofilestop() - _spdbgT0)
+        end
         return
     end
 
@@ -1085,19 +1182,34 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
                                 and (baseFilter .. "|PLAYER")
                                 or  baseFilter
         local auras = FetchAuras(unit, effectiveFilter)
-        local added = 0
+        local candidates = {}
+        local seen = {}
         for _, aura in ipairs(auras) do
-            if added >= maxCount then break end
-            local ic = AcquireIcon(data.root)
+            local key = BuildAuraKey(aura, auraType)
+            if not key or not seen[key] then
+                if key then seen[key] = true end
+                local info = AnalyzeAura(aura, auraType, unit, auraType == "harm" and HasFilterToken(effectiveFilter, "PLAYER"))
+                info.key = key
+                candidates[#candidates + 1] = info
+            end
+        end
+        table.sort(candidates, function(a, b)
+            local ap = a.priority or 0
+            local bp = b.priority or 0
+            if ap ~= bp then return ap > bp end
+            return (a.expirationTime or 0) > (b.expirationTime or 0)
+        end)
+        for i = 1, math.min(maxCount, #candidates) do
+            local cand = candidates[i]
+            local ic = AcquireStableIcon(cand.aura, cand.auraType)
             if not ic then break end  -- pool vide en combat : stop l'allocation
-            UpdateAuraIcon(ic, aura, auraType, cfg)
-            ic.auraType = auraType
+            UpdateAuraIcon(ic, cand.aura, cand.auraType, cfg)
+            ic.auraType = cand.auraType
             -- auraInstanceID : lire via pcall (peut être tainted)
-            local ok, instID = pcall(function() return aura.auraInstanceID end)
+            local ok, instID = pcall(function() return cand.aura.auraInstanceID end)
             ic.auraID = ok and SP:UntaintNum(instID) or nil
             if ic.auraID then data.auraMap[ic.auraID] = ic end
             table.insert(data.auraIcons, ic)
-            added = added + 1
         end
     end
 
@@ -1107,6 +1219,7 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
     if cfg.auras_buff then
         AddBatch("HELPFUL", "help", maxBuff)
     end
+    ReleaseUnusedStableIcons()
 
     RepositionIcons(data)
 
@@ -1127,6 +1240,9 @@ function SP.Auras:UpdateUnit(data, unit, updateInfo)
         end
     end
     pcall(SP.Orb.UpdateCC, SP.Orb, data, ccExpiry)
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Auras.UpdateUnit", debugprofilestop() - _spdbgT0)
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -1142,7 +1258,7 @@ function SP.Auras:PrewarmPool(count)
     for _ = 1, toCreate do
         -- AcquireIcon avec UIParent comme parent temporaire crée et retourne une frame.
         -- On la remet immédiatement dans le pool via ReleaseIcon (chemin interne).
-        local f = AcquireIcon(UIParent)
+        local f = AcquireIcon(UIParent, true)
         if f then
             f:Hide()
             f:ClearAllPoints()

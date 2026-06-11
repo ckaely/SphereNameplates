@@ -871,10 +871,22 @@ function M:CreateButton(bar, barIndex, buttonIndex)
     b._barIndex = barIndex
     b._buttonIndex = buttonIndex
 
-    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    -- Masque circulaire pour TOUT le chrome du bouton (fond, hover, press,
+    -- glow de relâchement). Sans lui, les slots vides et les feedbacks
+    -- apparaissent en CARRÉ alors que les icônes sont rondes.
+    b.chromeMask = b:CreateMaskTexture()
+    pcall(function()
+        b.chromeMask:SetTexture(ACTION_BUTTON_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        b.chromeMask:SetAllPoints(b)
+    end)
+
+    -- ARTWORK -1 (sous l'icône) et pas BACKGROUND : en Midnight 12.x,
+    -- AddMaskTexture peut être ignoré sur le layer BACKGROUND (cf. WIKI/Orb.lua).
+    b.bg = b:CreateTexture(nil, "ARTWORK", nil, -1)
     b.bg:SetAllPoints()
     b.bg:SetTexture(WHITE)
     b.bg:SetVertexColor(0.03, 0.025, 0.018, 0.72)
+    pcall(b.bg.AddMaskTexture, b.bg, b.chromeMask)
 
     b.icon = b:CreateTexture(nil, "ARTWORK")
     b.icon:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
@@ -886,16 +898,23 @@ function M:CreateButton(bar, barIndex, buttonIndex)
     b.border:SetTexture(WHITE)
     b.border:SetVertexColor(0, 0, 0, 0)
     b.border:SetAlpha(0)
+    pcall(b.border.AddMaskTexture, b.border, b.chromeMask)
 
     b.hover = b:CreateTexture(nil, "HIGHLIGHT")
     b.hover:SetAllPoints()
     b.hover:SetTexture(WHITE)
     b.hover:SetBlendMode("ADD")
     b.hover:SetVertexColor(1.0, 0.82, 0.25, 0.16)
+    pcall(b.hover.AddMaskTexture, b.hover, b.chromeMask)
     b:SetHighlightTexture(b.hover)
 
     b.cooldown = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
     b.cooldown:SetAllPoints(b.icon)
+    -- Swipe CIRCULAIRE : le swipe par défaut est carré (et peut rendre un
+    -- carré gris en 12.x, cf. BUG-002). Le masque circulaire comme texture
+    -- de swipe limite l'assombrissement au disque de l'icône.
+    pcall(b.cooldown.SetSwipeTexture, b.cooldown, ACTION_BUTTON_MASK)
+    pcall(b.cooldown.SetSwipeColor, b.cooldown, 0, 0, 0, 0.65)
 
     b.cdText = b:CreateFontString(nil, "OVERLAY")
     b.cdText:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
@@ -910,6 +929,7 @@ function M:CreateButton(bar, barIndex, buttonIndex)
     b.press:SetTexture(WHITE)
     b.press:SetVertexColor(0, 0, 0, 0.38)
     b.press:Hide()
+    pcall(b.press.AddMaskTexture, b.press, b.chromeMask)
 
     b.releaseGlow = b:CreateTexture(nil, "OVERLAY")
     b.releaseGlow:SetAllPoints()
@@ -918,6 +938,7 @@ function M:CreateButton(bar, barIndex, buttonIndex)
     b.releaseGlow:SetVertexColor(0.40, 1.00, 0.74, 1)
     b.releaseGlow:SetAlpha(0)
     b.releaseGlow:Hide()
+    pcall(b.releaseGlow.AddMaskTexture, b.releaseGlow, b.chromeMask)
 
     b.releaseAnim = b.releaseGlow:CreateAnimationGroup()
     local fade = b.releaseAnim:CreateAnimation("Alpha")

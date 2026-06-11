@@ -468,24 +468,33 @@ function M:SetHemisphereValue(hemi, ratio, r, g, b, alpha)
     hemi.tex:SetAlpha(alpha)
 end
 
+-- BUG-039 : UnitPower/UnitPowerMax retournent des SECRET NUMBERS en Midnight.
+-- type() == "number" et les comparaisons passent, mais TOUTE arithmétique Lua
+-- (division du ratio) crash hors pcall. Échapper via SP:UntaintNum (escape
+-- C-side SetFormattedText) AVANT tout calcul — pattern HP officiel du projet.
 function M:GetPrimaryPower()
-    local ok, ptype, cur, maxv = pcall(function()
-        local pt = UnitPowerType(UNIT)
-        return pt, UnitPower(UNIT, pt) or 0, UnitPowerMax(UNIT, pt) or 0
-    end)
-    if not ok or type(maxv) ~= "number" or maxv <= 0 then return nil end
-    return ptype, Clamp((tonumber(cur) or 0) / maxv, 0, 1), cur, maxv
+    local okType, ptype = pcall(UnitPowerType, UNIT)
+    if not okType or ptype == nil then return nil end
+    local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
+    local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
+    if not (okCur and okMax) then return nil end
+    local cur  = SP.UntaintNum and SP:UntaintNum(rawCur) or tonumber(rawCur)
+    local maxv = SP.UntaintNum and SP:UntaintNum(rawMax) or tonumber(rawMax)
+    if not cur or not maxv or maxv <= 0 then return nil end
+    return ptype, Clamp(cur / maxv, 0, 1), cur, maxv
 end
 
 function M:GetClassPower()
     local ptype = PlayerClassPowerType()
     if not ptype then return nil end
-    local ok, cur, maxv = pcall(function()
-        return UnitPower(UNIT, ptype) or 0, UnitPowerMax(UNIT, ptype) or 0
-    end)
-    if not ok or type(maxv) ~= "number" or maxv <= 0 then return nil end
+    local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
+    local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
+    if not (okCur and okMax) then return nil end
+    local cur  = SP.UntaintNum and SP:UntaintNum(rawCur) or tonumber(rawCur)
+    local maxv = SP.UntaintNum and SP:UntaintNum(rawMax) or tonumber(rawMax)
+    if not cur or not maxv or maxv <= 0 then return nil end
     local kind = PlayerClassPowerKind()
-    return ptype, Clamp((tonumber(cur) or 0) / maxv, 0, 1), cur, maxv, kind
+    return ptype, Clamp(cur / maxv, 0, 1), cur, maxv, kind
 end
 
 function M:UpdateResourceRing()
@@ -551,16 +560,12 @@ function M:UpdateClassPower()
         return
     end
 
-    local ok, cur, maxv = pcall(function()
-        return UnitPower(UNIT, ptype) or 0, UnitPowerMax(UNIT, ptype) or 0
-    end)
-    if not ok or type(maxv) ~= "number" or maxv <= 0 then
-        data.moiClassPowerText:Hide()
-        return
-    end
-
-    cur = tonumber(cur) or 0
-    if cur <= 0 then
+    -- UntaintNum obligatoire : string.format/comparaisons sur secret = crash
+    local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
+    local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
+    local cur  = okCur and SP.UntaintNum and SP:UntaintNum(rawCur) or nil
+    local maxv = okMax and SP.UntaintNum and SP:UntaintNum(rawMax) or nil
+    if not cur or not maxv or maxv <= 0 or cur <= 0 then
         data.moiClassPowerText:Hide()
         return
     end

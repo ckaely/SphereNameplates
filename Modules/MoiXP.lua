@@ -1,16 +1,15 @@
 -------------------------------------------------------------------------------
---  SphereNameplates / Sphere UI — MoiXP (Lot D)
+--  SphereNameplates / Sphere UI — MoiXP (Lot D, v2)
 --
 --  Arc de progression XP / réputation autour de la sphère "Moi".
---  Rendu : disque Cooldown (swipe par défaut, PAS de SetSwipeTexture custom —
---  carré noir en 12.x, cf. CastBar) placé SOUS l'orbe : l'orbe couvre le
---  centre, seule la marge extérieure est visible → arc radial propre.
---  Pattern identique au castbar circulaire V5 (prouvé en jeu).
 --
---  Modes : auto (XP si pas niveau max, sinon réputation suivie) | xp |
---  reputation | hidden. Rested XP = second arc bleu translucide en avance.
---  Toutes les lectures de valeurs sont en pcall : si une valeur est secrète
---  (Midnight), l'arc se cache proprement au lieu de crasher.
+--  v2 (BUG-040) : l'approche disque Cooldown rendait un CARRÉ NOIR autour de
+--  l'orbe (swipe par défaut carré en 12.x — AP-24 confirmé). Remplacée par un
+--  anneau de SEGMENTS (perles ping4) positionnés par trigonométrie : départ en
+--  haut (12h), sens horaire. Zéro Cooldown, zéro OnUpdate, textures pures.
+--
+--  Violet = XP · perles bleues translucides = avance rested · vert = réputation.
+--  Toutes les valeurs passent par SP:UntaintNum (secret numbers Midnight).
 -------------------------------------------------------------------------------
 
 local SP = _G["SphereNameplates"]
@@ -20,6 +19,8 @@ SP.MoiXP = SP.MoiXP or {}
 local X = SP.MoiXP
 
 local UNIT = "player"
+local SEGMENTS = 28
+local SEG_TEX = "Interface\\Cooldown\\ping4"
 
 local function DB()
     return SP.db or {}
@@ -36,10 +37,18 @@ local function Clamp(v, lo, hi)
     return v
 end
 
--- Couleurs des modes
-local COLOR_XP     = {0.58, 0.22, 0.95}   -- violet XP
-local COLOR_RESTED = {0.22, 0.55, 1.00}   -- bleu rested (avance translucide)
-local COLOR_REP    = {0.20, 0.78, 0.32}   -- vert réputation
+-- Échappe une valeur potentiellement secrète vers un nombre Lua propre.
+local function CleanNum(raw)
+    if raw == nil then return nil end
+    if SP.UntaintNum then return SP:UntaintNum(raw) end
+    local ok, n = pcall(function() return tonumber(tostring(raw)) end)
+    return ok and n or nil
+end
+
+local COLOR_XP     = {0.58, 0.22, 0.95}
+local COLOR_RESTED = {0.25, 0.55, 1.00}
+local COLOR_REP    = {0.20, 0.78, 0.32}
+local COLOR_OFF    = {0.10, 0.09, 0.14}
 
 function X:IsEnabled()
     local db = DB()
@@ -54,18 +63,18 @@ function X:GetMoiData()
     return SP.UnitFrames and SP.UnitFrames[UNIT]
 end
 
--- ── Lectures de données (tout en pcall, nil = indisponible/secret) ──────────
+-- ── Lectures de données — UntaintNum sur tout ───────────────────────────────
 
 function X:ResolveMode()
     local cfg = CFG()
     local mode = cfg.moi_xp_ring_mode or "auto"
     if mode == "hidden" then return nil end
     if mode == "xp" or mode == "reputation" then return mode end
-    -- auto : XP tant que pertinente, sinon bascule réputation suivie
     local isMax, xpOff = false, false
     pcall(function()
-        local maxL = (GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion()) or 80
-        isMax = (UnitLevel(UNIT) or 1) >= maxL
+        local maxL = CleanNum(GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion()) or 80
+        local lvl  = CleanNum(UnitLevel(UNIT)) or 1
+        isMax = lvl >= maxL
     end)
     pcall(function()
         xpOff = (IsXPUserDisabled and IsXPUserDisabled()) == true
@@ -75,12 +84,17 @@ function X:ResolveMode()
 end
 
 function X:GetXP()
-    local ok, cur, maxv, rested = pcall(function()
-        return UnitXP(UNIT) or 0, UnitXPMax(UNIT) or 0, (GetXPExhaustion and GetXPExhaustion()) or 0
+    local okC, rawCur = pcall(UnitXP, UNIT)
+    local okM, rawMax = pcall(UnitXPMax, UNIT)
+    if not (okC and okM) then return nil end
+    local cur  = CleanNum(rawCur)
+    local maxv = CleanNum(rawMax)
+    if not cur or not maxv or maxv <= 0 then return nil end
+    local rested = 0
+    local okR, rawRested = pcall(function()
+        return GetXPExhaustion and GetXPExhaustion() or 0
     end)
-    if not ok or type(maxv) ~= "number" or maxv <= 0 then return nil end
-    cur = tonumber(cur) or 0
-    rested = tonumber(rested) or 0
+    if okR then rested = CleanNum(rawRested) or 0 end
     return Clamp(cur / maxv, 0, 1), Clamp((cur + rested) / maxv, 0, 1), cur, maxv, rested
 end
 
@@ -92,65 +106,38 @@ function X:GetReputation()
         end
     end)
     if not ok or type(fdata) ~= "table" or not fdata.name then return nil end
-    local okMath, ratio, cur, maxv = pcall(function()
-        local lo = tonumber(fdata.currentReactionThreshold) or 0
-        local hi = tonumber(fdata.nextReactionThreshold) or 0
-        local standing = tonumber(fdata.currentStanding) or 0
-        local span = hi - lo
-        if span <= 0 then return 1, 0, 0 end   -- rang max (Exalté) → arc plein
-        return (standing - lo) / span, standing - lo, span
-    end)
-    if not okMath then return nil end
-    return Clamp(ratio, 0, 1), fdata.name, fdata.reaction, cur, maxv
+    local lo       = CleanNum(fdata.currentReactionThreshold) or 0
+    local hi       = CleanNum(fdata.nextReactionThreshold) or 0
+    local standing = CleanNum(fdata.currentStanding) or 0
+    local span = hi - lo
+    if span <= 0 then
+        return 1, fdata.name, fdata.reaction, 0, 0   -- rang max → anneau plein
+    end
+    return Clamp((standing - lo) / span, 0, 1), fdata.name, fdata.reaction, standing - lo, span
 end
 
--- ── Construction de l'arc ───────────────────────────────────────────────────
-
-local function ConfigureCooldown(cd)
-    cd:SetDrawSwipe(true)
-    cd:SetDrawEdge(false)
-    pcall(function() cd:SetDrawBling(false) end)
-    pcall(function() cd:SetHideCountdownNumbers(true) end)
-    pcall(function() cd:SetUseCircularEdge(true) end)
-    cd:SetReverse(true)
-    cd:EnableMouse(false)
-end
-
--- Progression statique : SetCooldown ancré dans le passé + Pause.
-local PROG_DURATION = 1000
-local function SetProgress(cd, p)
-    p = Clamp(p, 0, 0.9995)
-    local now = GetTime and GetTime() or 0
-    pcall(cd.SetCooldown, cd, now - p * PROG_DURATION, PROG_DURATION)
-    pcall(cd.Pause, cd)
-end
+-- ── Construction de l'anneau de segments ────────────────────────────────────
 
 function X:EnsureRing()
     local data = self:GetMoiData()
     if not (data and data.root and data.orbFrame) then return nil end
     if self.ring and self.ring._data == data then return self.ring end
 
-    -- La sphère a été reconstruite (changement de taille) : on abandonne
-    -- l'ancien holder (parent caché) et on recrée sur le nouveau root.
-    local rootFL = data.root:GetFrameLevel() or 10
-
+    -- Sphère reconstruite (changement de taille) : on recrée sur le nouveau root.
     local holder = CreateFrame("Frame", nil, data.root)
-    holder:SetFrameLevel(math.max(0, rootFL))   -- sous bgFrame (root+1) → l'orbe couvre le centre
+    holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 27)
     holder:SetPoint("CENTER", data.orbFrame, "CENTER")
 
-    -- Arc rested (sous l'arc principal) : avance translucide
-    local cdRested = CreateFrame("Cooldown", nil, holder, "CooldownFrameTemplate")
-    ConfigureCooldown(cdRested)
-    cdRested:SetPoint("CENTER", data.orbFrame, "CENTER")
-    cdRested:Hide()
+    local segs = {}
+    for i = 1, SEGMENTS do
+        local t = holder:CreateTexture(nil, "ARTWORK", nil, 3)
+        t:SetTexture(SEG_TEX)
+        t:SetBlendMode("ADD")
+        t:SetAlpha(0)
+        segs[i] = t
+    end
 
-    -- Arc principal XP / réputation
-    local cdMain = CreateFrame("Cooldown", nil, holder, "CooldownFrameTemplate")
-    ConfigureCooldown(cdMain)
-    cdMain:SetPoint("CENTER", data.orbFrame, "CENTER")
-    cdMain:SetFrameLevel(cdRested:GetFrameLevel() + 1)
-
-    -- Flash de gain : pulse d'alpha sans OnUpdate
+    -- Flash de gain (AnimationGroup, pas d'OnUpdate)
     local flash = holder:CreateAnimationGroup()
     local a1 = flash:CreateAnimation("Alpha")
     a1:SetFromAlpha(1.0); a1:SetToAlpha(0.45); a1:SetDuration(0.10); a1:SetOrder(1)
@@ -158,7 +145,7 @@ function X:EnsureRing()
     a2:SetFromAlpha(0.45); a2:SetToAlpha(1.0); a2:SetDuration(0.45); a2:SetOrder(2)
     a2:SetSmoothing("OUT")
 
-    -- Hotspot tooltip : petite zone au sommet de l'arc
+    -- Hotspot tooltip au sommet de l'anneau
     local hotspot = CreateFrame("Frame", nil, holder)
     hotspot:EnableMouse(true)
     hotspot:SetScript("OnEnter", function(f) X:ShowTooltip(f) end)
@@ -167,8 +154,7 @@ function X:EnsureRing()
     self.ring = {
         _data = data,
         holder = holder,
-        cdMain = cdMain,
-        cdRested = cdRested,
+        segs = segs,
         flash = flash,
         hotspot = hotspot,
     }
@@ -180,14 +166,40 @@ function X:Layout(ring)
     local data = ring._data
     local cfg = CFG()
     local orbSize = tonumber(data.orbSize) or tonumber(cfg.size) or 74
-    local size = orbSize * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
-    ring._size = size
-    ring.holder:SetSize(size, size)
-    ring.cdMain:SetSize(size, size)
-    ring.cdRested:SetSize(size + 5, size + 5)
-    ring.hotspot:SetSize(math.max(18, size * 0.22), math.max(10, size * 0.10))
+    local radius = orbSize * 0.5 * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
+    local segSize = math.max(5, orbSize * 0.085)
+    if ring._radius == radius and ring._segSize == segSize then return end
+    ring._radius, ring._segSize = radius, segSize
+    ring.holder:SetSize(radius * 2, radius * 2)
+    for i, t in ipairs(ring.segs) do
+        -- Départ en haut (12h), sens horaire — convention cooldown/XP.
+        local theta = (math.pi / 2) - ((i - 0.5) / SEGMENTS) * (2 * math.pi)
+        t:SetSize(segSize, segSize)
+        t:ClearAllPoints()
+        t:SetPoint("CENTER", ring.holder, "CENTER",
+            math.cos(theta) * radius, math.sin(theta) * radius)
+    end
+    ring.hotspot:SetSize(math.max(20, radius * 0.5), math.max(12, segSize * 1.6))
     ring.hotspot:ClearAllPoints()
-    ring.hotspot:SetPoint("CENTER", data.orbFrame, "CENTER", 0, size * 0.5)
+    ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, radius)
+end
+
+local function PaintSegments(ring, p, pLead, mainColor, leadColor, alpha)
+    local lit  = math.floor(Clamp(p, 0, 1) * SEGMENTS + 0.5)
+    local lead = pLead and math.floor(Clamp(pLead, 0, 1) * SEGMENTS + 0.5) or lit
+    for i, t in ipairs(ring.segs) do
+        if i <= lit then
+            t:SetVertexColor(mainColor[1], mainColor[2], mainColor[3], 1)
+            t:SetAlpha(alpha)
+        elseif i <= lead and leadColor then
+            t:SetVertexColor(leadColor[1], leadColor[2], leadColor[3], 1)
+            t:SetAlpha(alpha * 0.45)
+        else
+            -- Perle éteinte : piste discrète pour lire la progression restante
+            t:SetVertexColor(COLOR_OFF[1], COLOR_OFF[2], COLOR_OFF[3], 1)
+            t:SetAlpha(alpha * 0.30)
+        end
+    end
 end
 
 -- ── Update principal ────────────────────────────────────────────────────────
@@ -212,24 +224,12 @@ function X:Update()
     if mode == "xp" then
         local p, pRested = self:GetXP()
         if not p then ring.holder:Hide() return end
-        SetProgress(ring.cdMain, p)
-        ring.cdMain:SetSwipeColor(COLOR_XP[1], COLOR_XP[2], COLOR_XP[3], alpha)
-        ring.cdMain:Show()
-        if pRested and pRested > p + 0.002 then
-            SetProgress(ring.cdRested, pRested)
-            ring.cdRested:SetSwipeColor(COLOR_RESTED[1], COLOR_RESTED[2], COLOR_RESTED[3], alpha * 0.40)
-            ring.cdRested:Show()
-        else
-            ring.cdRested:Hide()
-        end
+        PaintSegments(ring, p, pRested, COLOR_XP, COLOR_RESTED, alpha)
         ring._mode = "xp"
     else
         local p, name = self:GetReputation()
         if not p then ring.holder:Hide() return end
-        SetProgress(ring.cdMain, p)
-        ring.cdMain:SetSwipeColor(COLOR_REP[1], COLOR_REP[2], COLOR_REP[3], alpha)
-        ring.cdMain:Show()
-        ring.cdRested:Hide()
+        PaintSegments(ring, p, nil, COLOR_REP, nil, alpha)
         ring._mode = "reputation"
         ring._repName = name
     end

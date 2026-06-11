@@ -1599,14 +1599,34 @@ function SP.UIPlumber:BuildWindow()
     local win = CreateFrame("Frame", "SphereNameplatesPlumberStyleFrame", UIParent, "BackdropTemplate")
     self.win = win
     win:SetSize(1180, 720)
-    win:SetPoint("CENTER")
+    -- Position persistante + clamp : la fenêtre ne peut plus déborder de
+    -- l'écran (close button coupé selon l'échelle UI), et l'endroit où
+    -- l'utilisateur la pose est mémorisé entre les sessions.
+    win:SetClampedToScreen(true)
+    local db = SP.db or {}
+    if tonumber(db.psui_x) and tonumber(db.psui_y) then
+        win:SetPoint("CENTER", UIParent, "CENTER", db.psui_x, db.psui_y)
+    else
+        win:SetPoint("CENTER")
+    end
     win:SetFrameStrata("DIALOG")
     win:SetFrameLevel(400)
     win:SetMovable(true)
     win:EnableMouse(true)
     win:RegisterForDrag("LeftButton")
     win:SetScript("OnDragStart", win.StartMoving)
-    win:SetScript("OnDragStop", win.StopMovingOrSizing)
+    win:SetScript("OnDragStop", function(f)
+        f:StopMovingOrSizing()
+        local ok, cx, cy, ux, uy = pcall(function()
+            local a, b = f:GetCenter()
+            local c, d = UIParent:GetCenter()
+            return a, b, c, d
+        end)
+        if ok and cx and ux and SP.db then
+            SP.db.psui_x = math.floor(cx - ux + 0.5)
+            SP.db.psui_y = math.floor(cy - uy + 0.5)
+        end
+    end)
     table.insert(UISpecialFrames, win:GetName())
 
     local left = CreateFrame("Frame", nil, win)
@@ -4622,4 +4642,46 @@ end
 -- Plumber gère seul l'ouverture ; rien à enregistrer auprès d'AceConfig.
 if not SP.UI.Register then
     SP.UI.Register = function() end
+end
+
+-- ── Bouton "Sphere UI" dans le menu jeu (ESC) ────────────────────────────────
+-- Bouton custom ATTACHÉ au GameMenuFrame (pas inséré dans son layout : zéro
+-- risque de taint sur le menu protégé). Apparaît à droite du menu ESC.
+do
+    local function EnsureGameMenuButton()
+        if SP._gameMenuBtn or not GameMenuFrame then return end
+        local b = CreateFrame("Button", "SPSphereUIGameMenuButton", GameMenuFrame, "BackdropTemplate")
+        SP._gameMenuBtn = b
+        b:SetSize(140, 34)
+        b:SetPoint("TOPLEFT", GameMenuFrame, "TOPRIGHT", 8, -4)
+        b:SetFrameStrata("DIALOG")
+        b:SetBackdrop({
+            bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            edgeSize = 12,
+            insets   = {left=3, right=3, top=3, bottom=3},
+        })
+        b:SetBackdropColor(0.05, 0.03, 0.02, 0.95)
+        b:SetBackdropBorderColor(0.55, 0.35, 0.12, 1)
+        b.label = b:CreateFontString(nil, "OVERLAY")
+        b.label:SetFontObject(GameFontNormal)
+        b.label:SetPoint("CENTER")
+        b.label:SetText("|cFF8B0000Sphere|r|cFFFF7A00 UI|r")
+        b:SetScript("OnEnter", function(s) s:SetBackdropColor(0.12, 0.07, 0.03, 0.95) end)
+        b:SetScript("OnLeave", function(s) s:SetBackdropColor(0.05, 0.03, 0.02, 0.95) end)
+        b:SetScript("OnClick", function()
+            if HideUIPanel and GameMenuFrame then pcall(HideUIPanel, GameMenuFrame) end
+            if SP.UI and SP.UI.Open then SP.UI:Open() end
+        end)
+    end
+    if GameMenuFrame then
+        EnsureGameMenuButton()
+    else
+        local watcher = CreateFrame("Frame")
+        watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+        watcher:SetScript("OnEvent", function(f)
+            EnsureGameMenuButton()
+            if SP._gameMenuBtn then f:UnregisterAllEvents() end
+        end)
+    end
 end

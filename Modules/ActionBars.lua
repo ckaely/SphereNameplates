@@ -339,17 +339,21 @@ local function ShortKeyText(binding)
     return key
 end
 
+-- BUG-041 : GetActionCooldown retourne des SECRET NUMBERS en Midnight —
+-- tonumber(secret) RETOURNE le secret et toute comparaison crash. Toutes les
+-- décisions Lua passent en pcall; les valeurs brutes vont à SetCooldown qui
+-- les accepte côté C (pattern hpBar).
 local function SetCooldownFrame(cd, start, duration, enable, modRate)
     if not cd then return end
-    start = tonumber(start) or 0
-    duration = tonumber(duration) or 0
-    if duration <= 0 or enable == 0 then
+    local okOff, isOff = pcall(function()
+        return (tonumber(duration) or 0) <= 0 or enable == 0
+    end)
+    if okOff and isOff then
         pcall(cd.Clear, cd)
         return
     end
-    if CooldownFrame_Set then
-        pcall(CooldownFrame_Set, cd, start, duration, enable, false, modRate)
-    else
+    -- Valeurs lisibles OU secrètes : le moteur C trace le swipe lui-même.
+    if not pcall(cd.SetCooldown, cd, start, duration, modRate) then
         pcall(cd.SetCooldown, cd, start, duration)
     end
 end
@@ -486,7 +490,9 @@ function M:SetDragHighlights(active)
                         btn.dragRing:SetSize(ringSize, ringSize)
                         local hasAction = false
                         if HasAction and btn._slot then
-                            local ok, ha = pcall(HasAction, btn._slot)
+                            local ok, ha = pcall(function()
+                                return HasAction(btn._slot) == true
+                            end)
                             hasAction = ok and ha == true
                         end
                         if hasAction then
@@ -832,14 +838,24 @@ end
 function M:RegisterCooldownSkin(btn, start, duration, enable)
     if not btn then return end
     local cfg = self:GetBarConfig(btn._barIndex)
-    if cfg.showCooldown == false or enable == 0 then
+    local okOff, isOff = pcall(function()
+        return cfg.showCooldown == false or enable == 0
+    end)
+    if okOff and isOff then
         self:ClearCooldownSkin(btn)
         return
     end
-    local ok, s, d = pcall(function()
-        return tonumber(start) or 0, tonumber(duration) or 0
-    end)
-    if not ok or not s or not d or d <= MIN_SKIN_COOLDOWN then
+    -- BUG-041 : tonumber(secret) RETOURNE le secret (pas nil!) → toute
+    -- comparaison ensuite crash. L'animation custom (ombre+rotation) exige
+    -- des valeurs LISIBLES : si start/duration sont secrets, on laisse le
+    -- swipe natif C-side seul (SetCooldownFrame) et on coupe le skin.
+    local plain = SP.IsPlainNumber
+    if not (plain and plain(start) and plain(duration)) then
+        self:ClearCooldownSkin(btn)
+        return
+    end
+    local s, d = tonumber(start) or 0, tonumber(duration) or 0
+    if d <= MIN_SKIN_COOLDOWN then
         self:ClearCooldownSkin(btn)
         return
     end
@@ -1907,7 +1923,10 @@ function M:UpdateButton(btn)
     if not InCombat() then
         pcall(btn.SetAttribute, btn, "action", slot)
     end
-    local hasAction = HasAction and HasAction(slot)
+    local okHA, rawHA = pcall(function()
+        return HasAction and HasAction(slot) == true
+    end)
+    local hasAction = okHA and rawHA == true
     local emptyAlpha = Clamp(cfg.emptyAlpha, 0, 1)
     if not hasAction and cfg.showEmpty == false then
         ApplyButtonSkin(btn, cfg, false)
@@ -1931,10 +1950,17 @@ function M:UpdateButton(btn)
     if btn.border then btn.border:SetAlpha(0) end
     ApplyButtonSkin(btn, cfg, hasAction == true)
 
+    -- IsUsableAction peut retourner des secret booleans : les comparaisons
+    -- (~= / ==) crashent alors hors pcall. Défaut permissif (utilisable).
     local usable, noMana = true, false
     if IsUsableAction then
-        local ok, u, nm = pcall(IsUsableAction, slot)
-        usable, noMana = ok and u ~= false, ok and nm == true
+        local okU, u, nm = pcall(IsUsableAction, slot)
+        if okU then
+            local okCmp, us, nom = pcall(function()
+                return u ~= false, nm == true
+            end)
+            if okCmp then usable, noMana = us, nom end
+        end
     end
     if noMana then
         btn.icon:SetVertexColor(0.35, 0.45, 1.0, 1)
@@ -1944,11 +1970,10 @@ function M:UpdateButton(btn)
         btn.icon:SetVertexColor(0.42, 0.42, 0.42, 1)
     end
 
-    if IsCurrentAction and IsCurrentAction(slot) then
-        btn._isCurrentAction = true
-    else
-        btn._isCurrentAction = nil
-    end
+    local okCur, isCur = pcall(function()
+        return IsCurrentAction and IsCurrentAction(slot) == true
+    end)
+    btn._isCurrentAction = (okCur and isCur) or nil
     btn:SetChecked(false)
 
     if hasAction and GetActionCooldown then

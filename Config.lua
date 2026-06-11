@@ -422,22 +422,36 @@ end
 --  Stratégie 2 (C-side)  : scratchFS:SetFormattedText→GetText (marche pour
 --  les secret numbers stricts : duration, expirationTime, startMS, endMS…).
 -------------------------------------------------------------------------------
+-- Valide qu'une valeur est un nombre Lua ORDINAIRE : l'arithmétique sur un
+-- secret number crash (alors que type() == "number" passe). pcall = filtre.
+local function IsPlainNumber(n)
+    if n == nil then return false end
+    local ok = pcall(function() return n + 0 end)
+    return ok
+end
+SP.IsPlainNumber = IsPlainNumber
+
 function SP:UntaintNum(v)
     if v == nil then return nil end
-    -- Stratégie C-side en premier: SetFormattedText lit la valeur côté moteur
+    -- Court-circuit : déjà un nombre ordinaire.
+    if IsPlainNumber(v) then return tonumber(v) end
+    -- Stratégie C-side: SetFormattedText lit la valeur côté moteur
     -- et GetText rend une string Lua ordinaire.
     local fs = GetScratchFS()
     if fs then
         local ok = pcall(function() fs:SetFormattedText("%.10f", v) end)
         if ok then
             local s = fs:GetText()
-            local n = s and tonumber(s)
-            if n ~= nil then return n end
+            -- GARDE BUG-039bis : en Midnight, GetText peut rendre une SECRET
+            -- STRING → tonumber() rend alors un SECRET number. Valider avant
+            -- de retourner, sinon l'appelant crash sur sa première opération.
+            local okN, n = pcall(function() return s and tonumber(s) end)
+            if okN and IsPlainNumber(n) then return n end
         end
     end
-    -- Fallback seulement pour valeurs déjà propres.
+    -- Fallback : valide uniquement si le résultat est un nombre ordinaire.
     local okFast, fast = pcall(function() return tonumber(tostring(v)) end)
-    if okFast and fast ~= nil then return fast end
+    if okFast and IsPlainNumber(fast) then return fast end
     return nil
 end
 

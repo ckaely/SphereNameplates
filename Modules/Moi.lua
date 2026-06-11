@@ -356,6 +356,12 @@ end
 -- classe shadowcircle → invisible. Nouveau rendu : MASQUES (pattern hpEffectMask
 -- de l'orbe, prouvé en jeu) — masque hémisphère (moitié G/D) ∩ masque vertical
 -- ancré BOTTOM dont la hauteur = ratio ressource → vrai remplissage bas → haut.
+--
+-- BUG-039bis : UnitPower est un secret STRICT en Midnight (même UntaintNum
+-- échoue). AUCUN ratio Lua possible → la hauteur du masque est pilotée par un
+-- StatusBar DRIVER invisible : SetMinMaxValues/SetValue acceptent les secrets
+-- côté C, et le fillMask ancre son TOP sur la texture du driver (pattern
+-- hpEffectMask/BUG-026 : géométrie C-side, zéro arithmétique Lua).
 function M:CreateResourceHemisphere(holder, side)
     local tex = holder:CreateTexture(nil, "ARTWORK", nil, 5)
     tex:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
@@ -363,13 +369,27 @@ function M:CreateResourceHemisphere(holder, side)
     tex:SetVertexColor(1, 1, 1, 1)
     tex:SetAlpha(0.85)
 
+    -- Driver C-side : StatusBar vertical invisible. Sa StatusBarTexture sert
+    -- d'ancre TOP au masque de remplissage — la géométrie suit value/max sans
+    -- jamais lire les valeurs en Lua.
+    local driver = CreateFrame("StatusBar", nil, holder)
+    driver:SetOrientation("VERTICAL")
+    driver:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+    local dtex = driver:GetStatusBarTexture()
+    if dtex then dtex:SetAlpha(0) end
+    driver:SetMinMaxValues(0, 1)
+    driver:SetValue(0)
+    driver:SetAlpha(0)
+    driver:EnableMouse(false)
+
     local hemiMask = holder:CreateMaskTexture()
     hemiMask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     local fillMask = holder:CreateMaskTexture()
     fillMask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     pcall(tex.AddMaskTexture, tex, hemiMask)
     pcall(tex.AddMaskTexture, tex, fillMask)
-    return { tex = tex, hemiMask = hemiMask, fillMask = fillMask, side = side }
+    return { tex = tex, hemiMask = hemiMask, fillMask = fillMask,
+             driver = driver, driverTex = dtex, side = side }
 end
 
 function M:EnsureResourceRing(data)
@@ -448,53 +468,53 @@ function M:LayoutResourceRing(data)
         else
             hemi.hemiMask:SetPoint("LEFT", ring.holder, "CENTER", 0, 0)
         end
-        -- Masque vertical : ancré BOTTOM, hauteur pilotée par SetHemisphereValue.
+        -- Driver C-side : couvre l'anneau + débord 5% en bas (pied couvert à plein).
+        hemi.driver:ClearAllPoints()
+        hemi.driver:SetSize(size, size * 1.10)
+        hemi.driver:SetPoint("BOTTOM", ring.holder, "BOTTOM", 0, -size * 0.05)
+        -- Masque vertical : BOTTOM fixe, TOP rivé sur la texture du driver →
+        -- la hauteur visible suit value/max côté C, zéro ratio Lua.
         hemi.fillMask:ClearAllPoints()
-        hemi.fillMask:SetSize(size * 1.1, size)
+        hemi.fillMask:SetWidth(size * 1.1)
         hemi.fillMask:SetPoint("BOTTOM", ring.holder, "BOTTOM", 0, -size * 0.05)
+        if hemi.driverTex then
+            hemi.fillMask:SetPoint("TOP", hemi.driverTex, "TOP", 0, 0)
+        end
     end
 end
 
-function M:SetHemisphereValue(hemi, ratio, r, g, b, alpha)
-    if not hemi then return end
-    ratio = Clamp(ratio, 0, 1)
+-- Alimente un hémisphère avec les valeurs BRUTES (potentiellement secrètes) :
+-- elles ne traversent jamais Lua, seulement SetMinMaxValues/SetValue (C-side).
+function M:SetHemisphereRaw(hemi, rawCur, rawMax, r, g, b, alpha)
+    if not (hemi and hemi.driver) then return end
     alpha = Clamp(alpha, 0, 1)
-    local size = tonumber(hemi._size) or 64
-    -- Hauteur du masque = portion remplie (bas → haut). Le léger débord bas
-    -- (-5%) garantit que le pied de l'anneau est couvert à ratio plein.
-    hemi.fillMask:SetHeight(math.max(0.5, size * 1.05 * ratio))
-    hemi.tex:SetShown(ratio > 0.004)
+    pcall(hemi.driver.SetMinMaxValues, hemi.driver, 0, rawMax)
+    pcall(hemi.driver.SetValue, hemi.driver, rawCur)
+    hemi.tex:Show()
     hemi.tex:SetVertexColor(r or 1, g or 1, b or 1, 1)
     hemi.tex:SetAlpha(alpha)
 end
 
--- BUG-039 : UnitPower/UnitPowerMax retournent des SECRET NUMBERS en Midnight.
--- type() == "number" et les comparaisons passent, mais TOUTE arithmétique Lua
--- (division du ratio) crash hors pcall. Échapper via SP:UntaintNum (escape
--- C-side SetFormattedText) AVANT tout calcul — pattern HP officiel du projet.
-function M:GetPrimaryPower()
+-- BUG-039/039bis : UnitPower("player") est un secret STRICT en Midnight —
+-- même l'escape UntaintNum peut échouer. On ne LIT donc jamais les valeurs :
+-- on les transporte brutes jusqu'aux APIs C-side. Seul ptype (propre) sert
+-- aux décisions Lua (couleur, type de ressource).
+function M:GetPrimaryPowerRaw()
     local okType, ptype = pcall(UnitPowerType, UNIT)
     if not okType or ptype == nil then return nil end
     local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
     local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
-    if not (okCur and okMax) then return nil end
-    local cur  = SP.UntaintNum and SP:UntaintNum(rawCur) or tonumber(rawCur)
-    local maxv = SP.UntaintNum and SP:UntaintNum(rawMax) or tonumber(rawMax)
-    if not cur or not maxv or maxv <= 0 then return nil end
-    return ptype, Clamp(cur / maxv, 0, 1), cur, maxv
+    if not (okCur and okMax) or rawCur == nil or rawMax == nil then return nil end
+    return ptype, rawCur, rawMax
 end
 
-function M:GetClassPower()
+function M:GetClassPowerRaw()
     local ptype = PlayerClassPowerType()
     if not ptype then return nil end
     local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
     local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
-    if not (okCur and okMax) then return nil end
-    local cur  = SP.UntaintNum and SP:UntaintNum(rawCur) or tonumber(rawCur)
-    local maxv = SP.UntaintNum and SP:UntaintNum(rawMax) or tonumber(rawMax)
-    if not cur or not maxv or maxv <= 0 then return nil end
-    local kind = PlayerClassPowerKind()
-    return ptype, Clamp(cur / maxv, 0, 1), cur, maxv, kind
+    if not (okCur and okMax) or rawCur == nil or rawMax == nil then return nil end
+    return ptype, rawCur, rawMax, PlayerClassPowerKind()
 end
 
 function M:UpdateResourceRing()
@@ -511,7 +531,7 @@ function M:UpdateResourceRing()
         return
     end
 
-    local ptype, primaryRatio = self:GetPrimaryPower()
+    local ptype, rawCur, rawMax = self:GetPrimaryPowerRaw()
     if not ptype then
         ring._targetAlpha = 0
         ring.holder:SetAlpha(0)
@@ -522,18 +542,26 @@ function M:UpdateResourceRing()
     local pr, pg, pb = PowerColor(ptype)
     local alpha = Clamp(cfg.moi_resource_ring_alpha, 0, 1)
     local minAlpha = Clamp(cfg.moi_resource_ring_min_alpha, 0, 0.80)
-    local classType, classRatio, _, classMax, classKind = self:GetClassPower()
-    local split = cfg.moi_resource_ring_split ~= false and classType and classMax and classMax > 0
+    local classType, cRaw, cRawMax, classKind = self:GetClassPowerRaw()
+    -- Split si une ressource de classe existe ET que son max est exploitable.
+    -- Comparaison en pcall : si le max est secret (illisible), on suppose
+    -- utilisable — le driver C-side rendra la vérité de toute façon.
+    local classUsable = false
+    if classType then
+        local okCmp, usable = pcall(function() return (tonumber(cRawMax) or 0) > 0 end)
+        classUsable = (not okCmp) or usable == true
+    end
+    local split = cfg.moi_resource_ring_split ~= false and classUsable
 
     if split then
         local cr, cg, cb = pr, pg, pb
         local cc = CLASS_POWER_COLORS[classKind or ""]
         if cc then cr, cg, cb = cc[1], cc[2], cc[3] else cr, cg, cb = PowerColor(classType) end
-        self:SetHemisphereValue(ring.left, primaryRatio, pr, pg, pb, math.max(minAlpha, alpha))
-        self:SetHemisphereValue(ring.right, classRatio or 0, cr, cg, cb, math.max(minAlpha, alpha))
+        self:SetHemisphereRaw(ring.left, rawCur, rawMax, pr, pg, pb, math.max(minAlpha, alpha))
+        self:SetHemisphereRaw(ring.right, cRaw, cRawMax, cr, cg, cb, math.max(minAlpha, alpha))
     else
-        self:SetHemisphereValue(ring.left, primaryRatio, pr, pg, pb, math.max(minAlpha, alpha))
-        self:SetHemisphereValue(ring.right, primaryRatio, pr, pg, pb, math.max(minAlpha, alpha))
+        self:SetHemisphereRaw(ring.left, rawCur, rawMax, pr, pg, pb, math.max(minAlpha, alpha))
+        self:SetHemisphereRaw(ring.right, rawCur, rawMax, pr, pg, pb, math.max(minAlpha, alpha))
     end
 
     -- Visibilité par fondu : la cible d'alpha est lissée dans TickBehavior.
@@ -560,16 +588,26 @@ function M:UpdateClassPower()
         return
     end
 
-    -- UntaintNum obligatoire : string.format/comparaisons sur secret = crash
+    -- Valeurs potentiellement secrètes : JAMAIS string.format Lua.
+    -- SetFormattedText écrit côté C (escape officiel, pattern ApplyHPText).
     local okCur, rawCur = pcall(UnitPower, UNIT, ptype)
     local okMax, rawMax = pcall(UnitPowerMax, UNIT, ptype)
-    local cur  = okCur and SP.UntaintNum and SP:UntaintNum(rawCur) or nil
-    local maxv = okMax and SP.UntaintNum and SP:UntaintNum(rawMax) or nil
-    if not cur or not maxv or maxv <= 0 or cur <= 0 then
+    if not (okCur and okMax) or rawCur == nil or rawMax == nil then
         data.moiClassPowerText:Hide()
         return
     end
-    data.moiClassPowerText:SetText(string.format("%d/%d", cur, maxv))
+    -- Cacher à zéro seulement si la valeur est lisible; secret → on affiche.
+    local okZero, isZero = pcall(function() return (tonumber(rawCur) or 0) <= 0 end)
+    if okZero and isZero then
+        data.moiClassPowerText:Hide()
+        return
+    end
+    local okFmt = pcall(data.moiClassPowerText.SetFormattedText,
+        data.moiClassPowerText, "%d/%d", rawCur, rawMax)
+    if not okFmt then
+        data.moiClassPowerText:Hide()
+        return
+    end
     data.moiClassPowerText:Show()
     self:UpdateResourceRing()
 end

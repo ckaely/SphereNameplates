@@ -167,6 +167,25 @@ local UNITFRAME_CATEGORIES = {
     moi = true, target_unitframe = true, targettarget_unitframe = true,
 }
 
+-- Arbre de navigation UnitFrames (panneau GAUCHE) : groupes dépliables.
+local UF_TREE = {
+    {category="moi",                    label="Moi",                utype="PLAYER_SELF"},
+    {category="target_unitframe",      label="Cible",              utype="TARGET"},
+    {category="targettarget_unitframe", label="Cible de la cible", utype="TARGET_TARGET"},
+}
+
+-- Source unique des pages autorisées par type d'unitframe (DEC-019).
+local function UnitframePageKeys(utype)
+    if utype == "TARGET" then
+        return {"sphere", "text", "life", "castbar", "auras", "position"}
+    elseif utype == "TARGET_TARGET" then
+        return {"sphere", "text", "life", "position"}
+    end
+    return {"sphere", "text", "life", "resources", "castbar", "auras",
+            "moi_behavior", "position", "actionbars"}
+end
+
+
 local PAGES = {
     {key="sphere",  label="Sphere"},
     {key="text",    label="Texte"},
@@ -180,6 +199,14 @@ local PAGES = {
     {key="position", label="Position"},
     {key="actionbars", label="Barres d'actions"},
 }
+
+-- Déclarée APRÈS la table PAGES pour capturer la bonne local (pas un global nil).
+local function PageLabelByKey(key)
+    for _, page in ipairs(PAGES) do
+        if page.key == key then return page.label end
+    end
+    return key
+end
 
 local MAIN_NAV = {
     {key="nameplates", label="Nameplates"},
@@ -1865,6 +1892,183 @@ function SP.UIPlumber:BuildWindow()
     win.content = win.scroll.child
     sideNav:SetFrameLevel(win.scroll:GetFrameLevel() + 30)
     pageContainer:SetFrameLevel(sideNav:GetFrameLevel() + 4)
+
+    -- ── Arbre UnitFrames (panneau GAUCHE, famille unitframes uniquement) ──────
+    -- Moi / Cible / Cible de la cible dépliables, sous-pages indentées.
+    -- Design plat et moderne : rangées pleines, accent doré, chevrons sobres.
+    local tree = CreateFrame("Frame", nil, right)
+    win.treeNav = tree
+    tree:SetSize(306, 548)
+    tree:SetPoint("TOPLEFT", right, "TOPLEFT", 20, -76)
+    tree:SetFrameLevel(win.scroll:GetFrameLevel() + 30)
+    tree.bg = tree:CreateTexture(nil, "BACKGROUND")
+    tree.bg:SetAllPoints()
+    tree.bg:SetColorTexture(0.016, 0.013, 0.010, 0.42)
+    tree.topLine = tree:CreateTexture(nil, "ARTWORK")
+    tree.topLine:SetHeight(2)
+    tree.topLine:SetPoint("TOPLEFT", tree, "TOPLEFT", 14, -8)
+    tree.topLine:SetPoint("TOPRIGHT", tree, "TOPRIGHT", -14, -8)
+    tree.topLine:SetTexture("Interface\\Buttons\\WHITE8x8")
+    tree.topLine:SetVertexColor(0.85, 0.50, 0.18, 0.18)
+    tree.rightDivider = tree:CreateTexture(nil, "BORDER")
+    tree.rightDivider:SetWidth(2)
+    tree.rightDivider:SetPoint("TOPRIGHT", tree, "TOPRIGHT", 14, -12)
+    tree.rightDivider:SetPoint("BOTTOMRIGHT", tree, "BOTTOMRIGHT", 14, 8)
+    tree.rightDivider:SetColorTexture(0.78, 0.56, 0.28, 0.40)
+    tree.title = Text(tree, "UNITFRAMES", 11, BRONZE)
+    tree.title:SetPoint("TOPLEFT", tree, "TOPLEFT", 22, -22)
+    tree:Hide()
+
+    win.treeRows = {}
+    local function CreateTreeRow()
+        local r = CreateFrame("Button", nil, tree)
+        r:SetSize(274, 34)
+        r:SetFrameLevel(tree:GetFrameLevel() + 2)
+
+        r.bg = r:CreateTexture(nil, "BACKGROUND")
+        r.bg:SetAllPoints()
+        r.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        r.bg:SetVertexColor(0, 0, 0, 0)
+
+        r.hoverTex = r:CreateTexture(nil, "HIGHLIGHT")
+        r.hoverTex:SetAllPoints()
+        r.hoverTex:SetTexture("Interface\\Buttons\\WHITE8x8")
+        r.hoverTex:SetVertexColor(0.95, 0.62, 0.22, 0.07)
+
+        r.accent = r:CreateTexture(nil, "ARTWORK")
+        r.accent:SetSize(3, 24)
+        r.accent:SetPoint("LEFT", r, "LEFT", 0, 0)
+        r.accent:SetTexture("Interface\\Buttons\\WHITE8x8")
+        r.accent:SetVertexColor(0.95, 0.58, 0.18, 0)
+
+        r.underline = r:CreateTexture(nil, "ARTWORK")
+        r.underline:SetHeight(1)
+        r.underline:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 8, 0)
+        r.underline:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", -8, 0)
+        r.underline:SetTexture("Interface\\Buttons\\WHITE8x8")
+        r.underline:SetVertexColor(0.85, 0.50, 0.18, 0)
+
+        r.chevron = Text(r, ">", 11, GOLD)
+        r.chevron:SetPoint("LEFT", r, "LEFT", 12, 0)
+
+        r.icon = r:CreateTexture(nil, "ARTWORK")
+        r.icon:SetSize(20, 20)
+        r.icon:SetPoint("LEFT", r, "LEFT", 34, 0)
+        r.icon:Hide()
+
+        r.label = Text(r, "", 12, MUTED)
+        r.label:SetPoint("LEFT", r, "LEFT", 34, 0)
+        r.label:SetJustifyH("LEFT")
+
+        return r
+    end
+
+    function SP.UIPlumber:RefreshUnitFrameTree()
+        local w = self.win
+        if not (w and w.treeNav) then return end
+        self._ufExpanded = self._ufExpanded or { [self.category] = true }
+        local rows = w.treeRows
+        local idx, y = 0, -46
+
+        local function acquire()
+            idx = idx + 1
+            local r = rows[idx]
+            if not r then
+                r = CreateTreeRow()
+                rows[idx] = r
+            end
+            r:ClearAllPoints()
+            r:SetPoint("TOPLEFT", w.treeNav, "TOPLEFT", 14, y)
+            r:Show()
+            return r
+        end
+
+        for _, grp in ipairs(UF_TREE) do
+            local expanded = self._ufExpanded[grp.category] == true
+            local isActiveGrp = self.category == grp.category
+
+            local g = acquire()
+            g:SetHeight(38)
+            g.bg:SetVertexColor(0.055, 0.042, 0.028, isActiveGrp and 0.85 or 0.45)
+            g.chevron:SetText(expanded and "v" or ">")
+            g.chevron:SetTextColor(0.95, 0.72, 0.25, 1)
+            g.icon:Hide()
+            g.label:ClearAllPoints()
+            g.label:SetPoint("LEFT", g, "LEFT", 34, 0)
+            g.label:SetText(grp.label)
+            g.label:SetFontObject(GameFontNormal)
+            if isActiveGrp then
+                g.label:SetTextColor(1, 1, 1, 1)
+            else
+                g.label:SetTextColor(1.0, 0.82, 0.0, 1)
+            end
+            g.accent:SetVertexColor(0.95, 0.58, 0.18, isActiveGrp and 1 or 0)
+            g.underline:SetVertexColor(0.85, 0.50, 0.18, expanded and 0.35 or 0)
+            g:SetScript("OnClick", function()
+                -- Replier les autres : un seul groupe ouvert = lecture claire
+                local wasExpanded = self._ufExpanded[grp.category] == true
+                for _, other in ipairs(UF_TREE) do
+                    self._ufExpanded[other.category] = false
+                end
+                self._ufExpanded[grp.category] = not wasExpanded or self.category ~= grp.category
+                if self.category ~= grp.category then
+                    self.category = grp.category
+                    self.unitKind[grp.category] = "self"
+                    local keys = UnitframePageKeys(grp.utype)
+                    local pageOK = false
+                    for _, k in ipairs(keys) do
+                        if k == self.page then pageOK = true break end
+                    end
+                    if not pageOK then self.page = keys[1] end
+                end
+                self:RefreshAll()
+            end)
+            y = y - 40
+
+            if expanded then
+                for _, key in ipairs(UnitframePageKeys(grp.utype)) do
+                    local p = acquire()
+                    p:SetHeight(30)
+                    local isActive = isActiveGrp and self.page == key
+                    p.bg:SetVertexColor(0.05, 0.04, 0.028, isActive and 0.90 or 0)
+                    p.chevron:SetText("")
+                    local iconDef = SIDE_ICONS and SIDE_ICONS[key]
+                    local texture = type(iconDef) == "table" and iconDef.texture or nil
+                    if texture then
+                        SafeTexture(p.icon, texture)
+                        p.icon:Show()
+                        p.label:ClearAllPoints()
+                        p.label:SetPoint("LEFT", p, "LEFT", 62, 0)
+                    else
+                        p.icon:Hide()
+                        p.label:ClearAllPoints()
+                        p.label:SetPoint("LEFT", p, "LEFT", 62, 0)
+                    end
+                    p.label:SetText(PageLabelByKey(key))
+                    p.label:SetFontObject(GameFontNormalSmall)
+                    if isActive then
+                        p.label:SetTextColor(1, 1, 1, 1)
+                    else
+                        p.label:SetTextColor(0.72, 0.66, 0.56, 1)
+                    end
+                    p.accent:SetVertexColor(0.95, 0.58, 0.18, isActive and 1 or 0)
+                    p.underline:SetVertexColor(0, 0, 0, 0)
+                    p:SetScript("OnClick", function()
+                        if self.category ~= grp.category then
+                            self.category = grp.category
+                            self.unitKind[grp.category] = "self"
+                        end
+                        self.page = key
+                        self:RefreshAll()
+                    end)
+                    y = y - 32
+                end
+                y = y - 6
+            end
+        end
+
+        for i = idx + 1, #rows do rows[i]:Hide() end
+    end
 
     win.status = Text(right, "", 10, MUTED)
     win.status:SetPoint("BOTTOMLEFT", right, "BOTTOMLEFT", 42, 28)
@@ -4042,9 +4246,25 @@ function SP.UIPlumber:RefreshHeader()
     for _, b in pairs(win.specialButtons or {}) do b:Hide() end
 
     local entry = self:GetUnitEntry()
-    local showContext = family == "nameplates" or family == "unitframes"
-    local showSideNav = family ~= "modules"
+    -- UnitFrames : navigation par ARBRE à gauche — le sideNav droit (contexte
+    -- dropdown + pages verticales) est entièrement remplacé.
+    local isTree = family == "unitframes"
+    local showContext = family == "nameplates"
+    local showSideNav = family ~= "modules" and not isTree
     if win.sideNav then win.sideNav:SetShown(showSideNav) end
+    if win.treeNav then win.treeNav:SetShown(isTree) end
+    if win.scroll then
+        win.scroll:ClearAllPoints()
+        if isTree then
+            -- Contenu décalé à droite de l'arbre
+            win.scroll:SetPoint("TOPLEFT", win.header, "BOTTOMLEFT", 354, -36)
+        else
+            win.scroll:SetPoint("TOPLEFT", win.header, "BOTTOMLEFT", 16, -36)
+        end
+    end
+    if isTree then
+        self:RefreshUnitFrameTree()
+    end
     if win.contextTitle then
         win.contextTitle:Hide()
         win.contextTitle:SetText(family == "unitframes" and "UnitFrame" or "Contexte")
@@ -4091,18 +4311,11 @@ function SP.UIPlumber:RefreshHeader()
             return key == "sphere" or key == "text" or key == "life" or key == "castbar"
                 or key == "auras" or key == "target" or key == "effects" or key == "position"
         elseif family == "unitframes" then
-            local utype = self:GetUType()
-            if utype == "TARGET" then
-                -- Cible épurée (DEC-019) : pas de ressources/comportement/barres
-                return key == "sphere" or key == "text" or key == "life"
-                    or key == "castbar" or key == "auras" or key == "position"
-            elseif utype == "TARGET_TARGET" then
-                -- Cible de cible compacte : encore plus court
-                return key == "sphere" or key == "text" or key == "life" or key == "position"
+            -- Source unique DEC-019 : mêmes pages que l'arbre de gauche
+            for _, k in ipairs(UnitframePageKeys(self:GetUType())) do
+                if k == key then return true end
             end
-            return key == "sphere" or key == "text" or key == "life" or key == "resources"
-                or key == "castbar" or key == "auras" or key == "moi_behavior"
-                or key == "position" or key == "actionbars"
+            return false
         end
         return false
     end
@@ -4179,16 +4392,20 @@ function SP.UIPlumber:RefreshHeader()
         win.pageContainer:ClearAllPoints()
         win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -92)
     end
-    local idx = 0
-    for _, page in ipairs(PAGES) do
-        local b = win.pageButtons and win.pageButtons[page.key]
-        if b and pageAllowed(page.key) then
-            idx = idx + 1
-            b:ClearAllPoints()
-            b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
-            if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
-            b:SetShown(true)
-            b:SetSelected(self.page == page.key)
+    -- En mode arbre (unitframes), les boutons de pages du sideNav droit sont
+    -- remplacés par l'arbre de gauche : ne pas les afficher.
+    if not isTree then
+        local idx = 0
+        for _, page in ipairs(PAGES) do
+            local b = win.pageButtons and win.pageButtons[page.key]
+            if b and pageAllowed(page.key) then
+                idx = idx + 1
+                b:ClearAllPoints()
+                b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
+                if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
+                b:SetShown(true)
+                b:SetSelected(self.page == page.key)
+            end
         end
     end
 

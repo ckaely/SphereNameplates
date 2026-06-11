@@ -1,12 +1,12 @@
 ## Interface: 120005
-## Title: !|cFF8B0000Sphere|r|cFFFF7A00Plates|r |cFF888888v7.5|r
-## Notes: |cFFCCCCCCOrbes circulaires — HP fiables (RegisterUnitEvent) — WoW Midnight|r
+## Title: !|cFF8B0000Sphere|r|cFFFF7A00 UI|r |cFF888888v9.2|r
+## Notes: |cFFCCCCCCSphere UI - nameplates orbes, UnitFrame Moi, barres d'actions - WoW Midnight|r
 ## Author: SphereNameplates
-## Version: 7.5.0
+## Version: 9.2.0
 ## DefaultState: enabled
 ## SavedVariables: SpherePlatesDB
 
-# Bibliothèques
+# Bibliotheques
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.xml
 Libs\AceDB-3.0\AceDB-3.0.xml
@@ -20,6 +20,7 @@ Config.lua
 Orb.lua
 
 # Modules
+Modules\SPDebug.lua
 Modules\Logs.lua
 Modules\Auras.lua
 Modules\CastBarCCB.lua
@@ -32,8 +33,10 @@ Modules\RaidMarkerMenu.lua
 Modules\Profiler.lua
 Modules\ProfileManager.lua
 Modules\PackOrb.lua
+Modules\Moi.lua
+Modules\ActionBars.lua
 
-# Événements + UI
+# Evenements + UI
 Core.lua
-# UI.lua  -- DÉSACTIVÉ 2026-04-30 : remplacé par PSUI (interface unique)
+# UI.lua -- DESACTIVE 2026-04-30 : remplace par PSUI (interface unique)
 Modules\PSUI.lua

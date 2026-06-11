@@ -34,6 +34,7 @@ Modules\Profiler.lua
 Modules\ProfileManager.lua
 Modules\PackOrb.lua
 Modules\Moi.lua
+Modules\MoiXP.lua
 Modules\ActionBars.lua
 
 # Evenements + UI

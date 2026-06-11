@@ -350,18 +350,26 @@ local function SetFrameClipsChildren(frame, enabled)
     end
 end
 
-function M:CreateResourceHemisphere(parent, side)
-    local full = parent:GetParent() or parent
-    local clip = CreateFrame("Frame", nil, parent)
-    SetFrameClipsChildren(clip, true)
-    local fill = CreateFrame("Frame", nil, clip)
-    SetFrameClipsChildren(fill, true)
-    local tex = fill:CreateTexture(nil, "OVERLAY", nil, 5)
+-- BUG-038 : l'ancien rendu par frames clippées ne marchait pas — une frame
+-- WoW ne clippe PAS ses propres régions (SetClipsChildren = enfants seulement),
+-- donc l'anneau rendait toujours plein cercle, superposé pile sur la bordure
+-- classe shadowcircle → invisible. Nouveau rendu : MASQUES (pattern hpEffectMask
+-- de l'orbe, prouvé en jeu) — masque hémisphère (moitié G/D) ∩ masque vertical
+-- ancré BOTTOM dont la hauteur = ratio ressource → vrai remplissage bas → haut.
+function M:CreateResourceHemisphere(holder, side)
+    local tex = holder:CreateTexture(nil, "ARTWORK", nil, 5)
     tex:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
     tex:SetBlendMode("ADD")
     tex:SetVertexColor(1, 1, 1, 1)
     tex:SetAlpha(0.85)
-    return { outer = clip, fill = fill, tex = tex, side = side, full = full }
+
+    local hemiMask = holder:CreateMaskTexture()
+    hemiMask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    local fillMask = holder:CreateMaskTexture()
+    fillMask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    pcall(tex.AddMaskTexture, tex, hemiMask)
+    pcall(tex.AddMaskTexture, tex, fillMask)
+    return { tex = tex, hemiMask = hemiMask, fillMask = fillMask, side = side }
 end
 
 function M:EnsureResourceRing(data)
@@ -369,9 +377,18 @@ function M:EnsureResourceRing(data)
     local holder = CreateFrame("Frame", nil, data.root)
     holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 28)
     holder:SetPoint("CENTER", data.orbFrame or data.root, "CENTER")
-    SetFrameClipsChildren(holder, true)
+
+    -- Piste sombre : rend la portion NON remplie lisible et distingue
+    -- l'anneau ressource de la bordure classe (BLEND sombre, sous les fills).
+    local track = holder:CreateTexture(nil, "ARTWORK", nil, 4)
+    track:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    track:SetBlendMode("BLEND")
+    track:SetVertexColor(0.04, 0.04, 0.07, 1)
+    track:SetAlpha(0.60)
+
     data.moiResourceRing = {
         holder = holder,
+        track = track,
         left = self:CreateResourceHemisphere(holder, "left"),
         right = self:CreateResourceHemisphere(holder, "right"),
         _targetAlpha = 0,
@@ -407,25 +424,34 @@ function M:LayoutResourceRing(data)
     local cfg = CFG()
     local size = (tonumber(data.orbSize) or tonumber(cfg.size) or 74) * Clamp(cfg.moi_resource_ring_scale, 0.80, 1.60)
     local ring = data.moiResourceRing
+    ring._size = size
     ring.holder:SetSize(size, size)
     ring.holder:ClearAllPoints()
     ring.holder:SetPoint("CENTER", data.orbFrame or data.root, "CENTER")
+    if ring.track then
+        ring.track:ClearAllPoints()
+        ring.track:SetSize(size, size)
+        ring.track:SetPoint("CENTER", ring.holder, "CENTER")
+    end
     for _, hemi in ipairs({ring.left, ring.right}) do
-        local outer = hemi.outer
-        outer:ClearAllPoints()
-        outer:SetSize(size * 0.5, size)
-        if hemi.side == "left" then
-            outer:SetPoint("LEFT", ring.holder, "LEFT")
-        else
-            outer:SetPoint("RIGHT", ring.holder, "RIGHT")
-        end
-        hemi.fill:ClearAllPoints()
-        hemi.fill:SetPoint("BOTTOMLEFT", outer, "BOTTOMLEFT")
-        hemi.fill:SetPoint("BOTTOMRIGHT", outer, "BOTTOMRIGHT")
-        hemi.fill:SetSize(size * 0.5, size)
+        hemi._size = size
+        -- Texture toujours plein cercle, centrée : ce sont les MASQUES qui
+        -- découpent (hémisphère + hauteur de remplissage).
         hemi.tex:ClearAllPoints()
         hemi.tex:SetSize(size, size)
         hemi.tex:SetPoint("CENTER", ring.holder, "CENTER")
+        -- Masque hémisphère : moitié gauche ou droite (hauteur généreuse).
+        hemi.hemiMask:ClearAllPoints()
+        hemi.hemiMask:SetSize(size * 0.5, size * 1.4)
+        if hemi.side == "left" then
+            hemi.hemiMask:SetPoint("RIGHT", ring.holder, "CENTER", 0, 0)
+        else
+            hemi.hemiMask:SetPoint("LEFT", ring.holder, "CENTER", 0, 0)
+        end
+        -- Masque vertical : ancré BOTTOM, hauteur pilotée par SetHemisphereValue.
+        hemi.fillMask:ClearAllPoints()
+        hemi.fillMask:SetSize(size * 1.1, size)
+        hemi.fillMask:SetPoint("BOTTOM", ring.holder, "BOTTOM", 0, -size * 0.05)
     end
 end
 
@@ -433,11 +459,11 @@ function M:SetHemisphereValue(hemi, ratio, r, g, b, alpha)
     if not hemi then return end
     ratio = Clamp(ratio, 0, 1)
     alpha = Clamp(alpha, 0, 1)
-    local w, h = hemi.outer:GetSize()
-    w = tonumber(w) or 1
-    h = tonumber(h) or 1
-    hemi.fill:SetWidth(w)
-    hemi.fill:SetHeight(math.max(1, h * ratio))
+    local size = tonumber(hemi._size) or 64
+    -- Hauteur du masque = portion remplie (bas → haut). Le léger débord bas
+    -- (-5%) garantit que le pied de l'anneau est couvert à ratio plein.
+    hemi.fillMask:SetHeight(math.max(0.5, size * 1.05 * ratio))
+    hemi.tex:SetShown(ratio > 0.004)
     hemi.tex:SetVertexColor(r or 1, g or 1, b or 1, 1)
     hemi.tex:SetAlpha(alpha)
 end
@@ -738,6 +764,8 @@ function M:UpdateAll(live)
     self:UpdateResourceRing()
     self:EvaluateBehavior()
     self:UpdateVisibility()
+    -- L'arc XP/réputation suit la sphère (recréé si data a été rebuild)
+    if SP.MoiXP then pcall(SP.MoiXP.Update, SP.MoiXP) end
 end
 
 function M:UpdateVisibility()

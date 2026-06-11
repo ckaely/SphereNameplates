@@ -61,6 +61,9 @@ local EVENTS = {
     -- Divers
     "RAID_TARGET_UPDATE",
     "QUEST_ACCEPTED",
+    "QUEST_TURNED_IN",
+    "QUEST_REMOVED",
+    "QUEST_WATCH_LIST_CHANGED",
     "UNIT_QUEST_LOG_CHANGED",
 }
 -- Enregistrement défensif : un event inconnu ne tue plus le chargement
@@ -115,6 +118,9 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                         SP.CastBar:Tick(data, now)
                     end
                 end
+                if SP.Moi and SP.Moi.TickCast then
+                    SP.Moi:TickCast(now)
+                end
             end)
             if SP.Profiler then SP.Profiler:Track("CastBar", debugprofilestop() - _pt0) end
         end
@@ -141,6 +147,9 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                     SP.Orb:UpdateFill(data, data.displayHP)
                 end
             end
+            if SP.Moi and SP.Moi.TickHealth then
+                pcall(SP.Moi.TickHealth, SP.Moi)
+            end
             if SP.Profiler then SP.Profiler:Track("HPLerp", debugprofilestop() - _pt0) end
         end
         _lerpAcc = 0
@@ -158,7 +167,10 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                 if cfg.fade_enabled and data.root then
                     -- UnitDistanceSquared : disponible en WoW Retail mais peut être absent
                     -- Si absent : pas de fade (_fadeAlpha reste à 1.0)
-                    local ok, dist = pcall(UnitDistanceSquared, unit)
+                    local ok, dist = false, nil
+                    if type(UnitDistanceSquared) == "function" then
+                        ok, dist = pcall(UnitDistanceSquared, unit)
+                    end
                     if ok and type(dist) == "number" then
                         local fadeStart = cfg.fade_start or 25
                         local fadeEnd   = cfg.fade_end   or 40
@@ -175,6 +187,50 @@ frame:SetScript("OnUpdate", function(_, elapsed)
                     end
                 else
                     data._fadeAlpha = 1.0
+                end
+
+                local nameAlpha = data._nameDistanceAlpha
+                if nameAlpha == nil then nameAlpha = 1.0 end
+                if cfg.name_distance_enabled and data.nameText then
+                    local isTarget = SP.SafeUnitIsUnit and SP:SafeUnitIsUnit(unit, "target")
+                    if isTarget then
+                        nameAlpha = 1.0
+                        data._nameDistanceLastDist = nil
+                    else
+                        local okNameDist, computed = pcall(function()
+                            if type(UnitDistanceSquared) ~= "function" then return nil end
+                            local dist2 = UnitDistanceSquared(unit)
+                            if type(dist2) ~= "number" then return nil end
+                            local d = math.sqrt(dist2)
+                            data._nameDistanceLastDist = d
+                            local mode = cfg.name_distance_mode or "limit"
+                            if mode == "fade" then
+                                local fullD = tonumber(cfg.name_fade_full) or 2
+                                local hideD = tonumber(cfg.name_fade_hidden) or 20
+                                if hideD <= fullD then hideD = fullD + 1 end
+                                if d <= fullD then return 1.0 end
+                                if d >= hideD then return 0.0 end
+                                local t = (d - fullD) / (hideD - fullD)
+                                return 1.0 - t
+                            end
+                            local maxD = tonumber(cfg.name_distance_max) or 20
+                            return d <= maxD and 1.0 or 0.0
+                        end)
+                        if okNameDist and type(computed) == "number" then
+                            computed = math.max(0, math.min(1, computed))
+                            local lerp = 0.45
+                            nameAlpha = nameAlpha + (computed - nameAlpha) * lerp
+                            if math.abs(nameAlpha - computed) < 0.015 then nameAlpha = computed end
+                        end
+                    end
+                else
+                    nameAlpha = 1.0
+                end
+                if data._nameDistanceAlpha ~= nameAlpha then
+                    data._nameDistanceAlpha = nameAlpha
+                    if SP.Orb and SP.Orb.ApplyNameDistanceAlpha then
+                        pcall(SP.Orb.ApplyNameDistanceAlpha, SP.Orb, data)
+                    end
                 end
             end
             if SP.Profiler then SP.Profiler:Track("Fade", debugprofilestop() - _pt0) end
@@ -262,13 +318,16 @@ frame:SetScript("OnUpdate", function(_, elapsed)
             end
             -- Refresh couleur fill si mode progressive (NEUTRAL et autres non-joueurs
             -- reçoivent peu de UNIT_HEALTH → la couleur doit être recalculée au poll)
-            if _ncfg and _ncfg.fill_color_mode == "progressive" and data.displayHP then
-                pcall(SP.Orb.UpdateFill, SP.Orb, data, data.displayHP)
+            if _ncfg and _ncfg.fill_color_mode == "progressive" then
+                pcall(SP.Orb.UpdateFill, SP.Orb, data, data.displayHP or data.targetHP)
             end
             -- Poll auras : filet de sécurité si UNIT_AURA a été manqué ou pas livré
             if _auras_on and data.auraIcons then
                 pcall(SP.Auras.UpdateUnit, SP.Auras, data, unit, nil)
             end
+        end
+        if SP.Moi and SP.Moi.Poll then
+            pcall(SP.Moi.Poll, SP.Moi)
         end
         if SP.Profiler then SP.Profiler:Track("Poll", debugprofilestop() - _pt0) end
         _pollAcc = 0
@@ -279,6 +338,7 @@ end)
 --  DISPATCHER D'ÉVÉNEMENTS
 -- ─────────────────────────────────────────────────────────────────────────────
 frame:SetScript("OnEvent", function(_, event, arg1, arg2)
+    local _spdbgEventT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
 
     if event == "ADDON_LOADED" and arg1 == "SphereNameplates" then
         SP:Initialize()
@@ -288,7 +348,7 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
             -- Pré-peupler le pool d'icônes auras hors combat pour éviter CreateFrame
             -- en InCombatLockdown lors du premier cycle d'auras.
             if SP.Auras and SP.Auras.PrewarmPool then
-                pcall(SP.Auras.PrewarmPool, SP.Auras, 24)
+                pcall(SP.Auras.PrewarmPool, SP.Auras, 160)
             end
             -- Délai minimal pour que WoW charge les nameplates de zone
             if SP.ApplyNameplateCVars then SP:ApplyNameplateCVars() end
@@ -300,7 +360,7 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
 
     elseif event == "PLAYER_LEAVING_WORLD" then
-        if SP.Quest then SP.Quest:ClearCache() end
+        if SP.Quest then SP.Quest:ClearCache(true) end
         -- Vider le cache GUID classe (les tokens nameplateN changent entre zones)
         if SP._guidClassCache then
             for k in pairs(SP._guidClassCache) do SP._guidClassCache[k] = nil end
@@ -385,6 +445,9 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "PLAYER_REGEN_ENABLED" then
         SP.InCombat = false
         SP:Debug("LEAVE_COMBAT")
+        if SP.Auras and SP.Auras.PrewarmPool then
+            pcall(SP.Auras.PrewarmPool, SP.Auras, 160)
+        end
         if SP._pendingNameplateCVars then
             SP._pendingNameplateCVars = nil
             if SP.ApplyNameplateCVars then SP:ApplyNameplateCVars() end
@@ -396,6 +459,9 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
                 SP.Orb:UpdateCombat(data, unit)
             end
             pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, SP:GetCfg(data.unitType))
+        end
+        if SP.RaidMarkerMenu and SP.RaidMarkerMenu._pendingAttach and SP.RaidMarkerMenu.RefreshAttachments then
+            pcall(SP.RaidMarkerMenu.RefreshAttachments, SP.RaidMarkerMenu)
         end
 
     elseif event == "UNIT_NAME_UPDATE" then
@@ -434,10 +500,16 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
             SP.Orb:RefreshAllRaidMarks(0.05)
         end
 
-    elseif event == "QUEST_ACCEPTED" or event == "UNIT_QUEST_LOG_CHANGED" then
+    elseif event == "QUEST_ACCEPTED" or event == "UNIT_QUEST_LOG_CHANGED"
+        or event == "QUEST_TURNED_IN" or event == "QUEST_REMOVED"
+        or event == "QUEST_WATCH_LIST_CHANGED" then
         C_Timer.After(0.3, function()
             if SP.Quest then SP.Quest:UpdateAll() end
         end)
+    end
+
+    if _spdbgEventT0 and SP.SPDebug and SP.SPDebug.TrackEvent then
+        pcall(SP.SPDebug.TrackEvent, SP.SPDebug, event, debugprofilestop() - _spdbgEventT0, arg1)
     end
 end)
 
@@ -514,6 +586,9 @@ function SP:Initialize()
                 -- opérations multi-étapes (Rename, Duplicate...) pour éviter
                 -- de déclencher N RefreshAll intermédiaires inutiles.
                 if not SP._profileBulkOp then SP:RefreshAll() end
+                if SP.ActionBars and SP.ActionBars.Refresh then
+                    pcall(SP.ActionBars.Refresh, SP.ActionBars)
+                end
             end
             pcall(obj.RegisterCallback, obj, "OnProfileChanged", onProfileChange)
             pcall(obj.RegisterCallback, obj, "OnProfileCopied",  onProfileChange)
@@ -563,6 +638,17 @@ function SP:Initialize()
     -- Restaurer l'état du panneau perf si ouvert avant reload
     if SP.Profiler and SP.Profiler.RestorePanelState then
         SP.Profiler:RestorePanelState()
+    end
+
+    -- Sphere personnelle fixe ("Moi"), hors nameplates.
+    if SP.Moi and SP.Moi.Init then
+        pcall(SP.Moi.Init, SP.Moi)
+    end
+    if SP.MoiXP and SP.MoiXP.Init then
+        pcall(SP.MoiXP.Init, SP.MoiXP)
+    end
+    if SP.ActionBars and SP.ActionBars.Init then
+        pcall(SP.ActionBars.Init, SP.ActionBars)
     end
 
     SP:Print("v" .. SP.Version .. " chargé — |cFF00FFFFtapez /snp|r")
@@ -819,6 +905,8 @@ end
 --  AJOUT D'UNE PLAQUE (NAME_PLATE_UNIT_ADDED)
 -- ─────────────────────────────────────────────────────────────────────────────
 function SP:OnPlateAdded(unit)
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
+    if SP.SPDebug then SP.SPDebug:Count("Core.OnPlateAdded", "events", 1) end
     if not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then
         DEFAULT_CHAT_FRAME:AddMessage(
             "|cFFFF4444[SP]|r C_NamePlate absent — orbes impossibles")
@@ -907,6 +995,7 @@ function SP:OnPlateAdded(unit)
     data.displayHP       = nil   -- sera rempli par UpdateHealth (premier = direct)
     SP.Plates[unit]      = data
     SP.ActiveUnits[unit] = unitType
+    SP.ActiveOrbData[unit] = data
     pcall(SP.Orb.RefreshUnitColors, SP.Orb, data, unit, 1)
     if SP.PlayerContextMenu and SP.PlayerContextMenu.Attach then
         pcall(SP.PlayerContextMenu.Attach, SP.PlayerContextMenu, data, unit)
@@ -978,6 +1067,10 @@ function SP:OnPlateAdded(unit)
     end
 
     -- Mise à jour initiale complète
+    -- Une frame recyclee depuis le pool garde ses regions, mais pas forcement
+    -- les derniers reglages live (alphas FX, ombres, bordure, visibilite).
+    pcall(SP.Orb.SoftUpdate, SP.Orb, data, unit)
+
     pcall(SP.UpdateHealth,      SP, unit, data)
     pcall(SP.Orb.UpdateName,    SP.Orb, data, unit)
     pcall(SP.Orb.UpdateLevelText, SP.Orb, data, unit)
@@ -985,8 +1078,8 @@ function SP:OnPlateAdded(unit)
     pcall(SP.Orb.UpdateCombat,  SP.Orb, data, unit)
     pcall(SP.Orb.UpdatePower,   SP.Orb, data, unit)
     pcall(SP.Orb.UpdateRaidMark,SP.Orb, data, unit)
-    pcall(SP.Orb.SetTargetGlow, SP.Orb, data, UnitIsUnit(unit, "target"))
-    pcall(SP.Orb.SetFocusGlow,  SP.Orb, data, UnitIsUnit(unit, "focus"))
+    pcall(SP.Orb.SetTargetGlow, SP.Orb, data, SP:SafeUnitIsUnit(unit, "target"))
+    pcall(SP.Orb.SetFocusGlow,  SP.Orb, data, SP:SafeUnitIsUnit(unit, "focus"))
     pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, cfg)
 
     -- Cast en cours au moment de l'ajout
@@ -1006,12 +1099,17 @@ function SP:OnPlateAdded(unit)
     end
 
     SP:Debug(string.format("PLATE_OK %s [%s]", unit, unitType))
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Core.OnPlateAdded", debugprofilestop() - _spdbgT0, { plates = SP.SPDebug:CountPlates() })
+    end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 --  SUPPRESSION D'UNE PLAQUE (NAME_PLATE_UNIT_REMOVED)
 -- ─────────────────────────────────────────────────────────────────────────────
 function SP:OnPlateRemoved(unit)
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
+    if SP.SPDebug then SP.SPDebug:Count("Core.OnPlateRemoved", "events", 1) end
     local data = SP.Plates[unit]
     if data then
         if SP.PlayerContextMenu and SP.PlayerContextMenu.Detach then
@@ -1050,10 +1148,14 @@ function SP:OnPlateRemoved(unit)
     end
     SP.Plates[unit]      = nil
     SP.ActiveUnits[unit] = nil
+    SP.ActiveOrbData[unit] = nil
     
     -- Retourner au pool
     if data then
         pcall(SP.Orb.Release, SP.Orb, data)
+    end
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Core.OnPlateRemoved", debugprofilestop() - _spdbgT0, { plates = SP.SPDebug:CountPlates() })
     end
 end
 
@@ -1143,6 +1245,8 @@ end
 --      (la plate WoW est toujours là, pas besoin d'attendre)
 -- ─────────────────────────────────────────────────────────────────────────────
 function SP:RefreshAll()
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
+    if SP.SPDebug then SP.SPDebug:Count("Core.RefreshAll", "refreshes", 1) end
     local toRebuild = {}
 
     for unit, data in pairs(SP.Plates) do
@@ -1185,10 +1289,15 @@ function SP:RefreshAll()
     end
 
     if SP.Preview then SP.Preview:Refresh() end
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Core.RefreshAll", debugprofilestop() - _spdbgT0, { refresh = true, plates = SP.SPDebug:CountPlates() })
+    end
 end
 
 -- Rebuild total (changement de zone, /sp reload)
 function SP:HardRefreshAll()
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
+    if SP.SPDebug then SP.SPDebug:Count("Core.HardRefreshAll", "refreshes", 1) end
     SP:Debug("HardRefreshAll")
 
     -- Reset pack mode pour éviter des plaques bloquées dans un état réduit
@@ -1228,6 +1337,9 @@ function SP:HardRefreshAll()
             end
         end
     end)
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Core.HardRefreshAll", debugprofilestop() - _spdbgT0, { refresh = true, plates = SP.SPDebug:CountPlates() })
+    end
 end
 
 -- Force-update d'une sphère spécifique (sans changer de cible)
@@ -1256,16 +1368,36 @@ end
 --    lerp + effets visuels si h est non-tainté.
 -- ─────────────────────────────────────────────────────────────────────────────
 function SP:UpdateHealth(unit, data)
+    local _spdbgT0 = (SP.SPDebug and debugprofilestop and debugprofilestop()) or nil
     data = data or SP.Plates[unit]
     if not data or not unit or not data.hpBar then return end
 
-    -- ── 1. Fill HP — passe les tainted values au StatusBar C-side (taint-safe) ─
-    -- SetMinMaxValues/SetValue acceptent les "secret number tainted" de WoW Midnight.
-    -- Le moteur C calcule le ratio en interne — aucune arithmétique Lua.
-    pcall(function()
-        data.hpBar:SetMinMaxValues(0, UnitHealthMax(unit))
-        data.hpBar:SetValue(UnitHealth(unit))
+    -- ── 1. Driver HP visuel — passer par UnitHealthPercent quand possible ─────
+    -- En Midnight, le couple UnitHealth/UnitHealthMax peut ne pas piloter notre
+    -- StatusBar custom malgré le pcall. UnitHealthPercent + ScaleTo100 donne une
+    -- valeur C-side directement compatible avec une barre 0..100, sans division Lua.
+    local visualDriven = false
+    data._hpDriver = "none"
+    local okPct = pcall(function()
+        if type(UnitHealthPercent) ~= "function" then return end
+        if not (CurveConstants and CurveConstants.ScaleTo100) then return end
+        local immediate = Enum and Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate
+        data.hpBar:SetMinMaxValues(0, 100, immediate)
+        data.hpBar:SetValue(UnitHealthPercent(unit, false, CurveConstants.ScaleTo100), immediate)
+        data._hpDriver = "UnitHealthPercent.ScaleTo100"
+        visualDriven = true
     end)
+
+    if not okPct or not visualDriven then
+        -- Fallback historique : accepte parfois les secret numbers en C-side.
+        local okRaw = pcall(function()
+            local immediate = Enum and Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate
+            data.hpBar:SetMinMaxValues(0, UnitHealthMax(unit), immediate)
+            data.hpBar:SetValue(UnitHealth(unit), immediate)
+            data._hpDriver = "UnitHealth.raw"
+        end)
+        if not okRaw then data._hpDriver = "failed" end
+    end
 
     -- ── 2. Ratio propre — pour les effets visuels (couleur fill, glow lowHP) ───
     -- Tentative GetHPRatio (scratch StatusBar + SetFormattedText escape).
@@ -1281,9 +1413,17 @@ function SP:UpdateHealth(unit, data)
             -- Appels suivants : le lerp OnUpdate (60 FPS) gère l'interpolation
             data.targetHP = ratio
         end
+    else
+        local cfg = data.unitType and SP:GetCfg(data.unitType)
+        if cfg and cfg.fill_color_mode == "progressive" then
+            pcall(SP.Orb.UpdateFill, SP.Orb, data, data.displayHP or data.targetHP)
+        end
     end
 
     pcall(SP.Orb.UpdateLevelText, SP.Orb, data, unit)
+    if _spdbgT0 and SP.SPDebug then
+        SP.SPDebug:Track("Core.UpdateHealth", debugprofilestop() - _spdbgT0)
+    end
     SP:Debug("UpdateHealth " .. tostring(unit) .. " → hpBar updated, ratio=" .. tostring(ok and ratio or "err"))
 end
 
@@ -1292,8 +1432,8 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 function SP:UpdateAllGlows()
     for unit, data in pairs(SP.Plates) do
-        SP.Orb:SetTargetGlow(data, UnitIsUnit(unit, "target"))
-        SP.Orb:SetFocusGlow(data,  UnitIsUnit(unit, "focus"))
+        SP.Orb:SetTargetGlow(data, SP:SafeUnitIsUnit(unit, "target"))
+        SP.Orb:SetFocusGlow(data,  SP:SafeUnitIsUnit(unit, "focus"))
         pcall(SP.Orb.ApplySphereVisibility, SP.Orb, data, SP:GetCfg(data.unitType))
     end
 end
@@ -1342,9 +1482,11 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
 
     -- ── Perf ─────────────────────────────────────────────────────────────────
     elseif cmd == "perf" then
-        if SP.Profiler then SP.Profiler:TogglePanel() end
+        if SP.SPDebug then SP.SPDebug:Open("overview")
+        elseif SP.Profiler then SP.Profiler:TogglePanel() end
 
     elseif cmd == "logs" then
+        if SP.SPDebug then SP.SPDebug:Open("logs"); return end
         -- Dump rapide des derniers logs dans le chat
         if not (SP.Log and SP.Log:IsEnabled()) then
             SP:Print("|cFFFFAA00Logs désactivés. Activer dans /snp > Modules.|r")
@@ -1362,6 +1504,17 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
                         e.date or "??:??:??", col, e.level or "?", e.module or "?", e.msg or ""))
                 end
             end
+        end
+
+    elseif cmd == "spdebug" or cmd == "debugui" then
+        if SP.SPDebug then SP.SPDebug:Open("overview") end
+
+    elseif cmd == "uilab" or cmd == "psuilab" then
+        if SP.UIPlumber and SP.UIPlumber.ToggleUILab then
+            local ok, err = pcall(SP.UIPlumber.ToggleUILab, SP.UIPlumber)
+            if not ok then SP:Print("PSUI Lab erreur: " .. tostring(err)) end
+        else
+            SP:Print("PSUI Lab indisponible.")
         end
 
     elseif cmd == "reset" then
@@ -1409,6 +1562,15 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
             SP:Print(string.format("  fade=%s  start=%s  end=%s  min=%s",
                 tostring(cfg.fade_enabled), tostring(cfg.fade_start),
                 tostring(cfg.fade_end), tostring(cfg.fade_min_alpha)))
+            SP:Print(string.format("  nameDistance=%s mode=%s alpha=%.2f pack=%.2f dist=%s max=%s full=%s hidden=%s",
+                tostring(cfg.name_distance_enabled),
+                tostring(cfg.name_distance_mode),
+                tonumber(data._nameDistanceAlpha) or 1,
+                tonumber(data._packNameAlpha) or 1,
+                data._nameDistanceLastDist and string.format("%.1f", data._nameDistanceLastDist) or "n/a",
+                tostring(cfg.name_distance_max),
+                tostring(cfg.name_fade_full),
+                tostring(cfg.name_fade_hidden)))
             local rA = data.root and data.root:GetAlpha() or "nil"
             local rE = data.root and data.root.GetEffectiveAlpha and data.root:GetEffectiveAlpha() or "n/a"
             local pA = data.plate and data.plate:GetAlpha() or "nil"
@@ -1417,9 +1579,36 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
                 tonumber(rA) or 0, tonumber(rE) or 0, tonumber(pA) or 0, tonumber(pE) or 0))
             SP:Print(string.format("  bg α=%s  R=%s G=%s B=%s",
                 tostring(cfg.bgAlpha), tostring(cfg.bgR), tostring(cfg.bgG), tostring(cfg.bgB)))
+            SP:Print(string.format("  emptyClear=%s  emptyShade=%s shadeA=%s",
+                tostring(cfg.orb_empty_clear_enabled ~= false),
+                tostring(cfg.orb_empty_shade_enabled ~= false),
+                tostring(cfg.orb_empty_shade_alpha)))
+            SP:Print("  hpDriver=" .. tostring(data._hpDriver or "nil"))
+            if data.hpBar then
+                local okBar, minv, maxv = pcall(data.hpBar.GetMinMaxValues, data.hpBar)
+                local okVal, val = pcall(data.hpBar.GetValue, data.hpBar)
+                SP:Print("  hpBar min=" .. tostring(okBar and minv or "err") ..
+                    " max=" .. tostring(okBar and maxv or "err") ..
+                    " value=" .. tostring(okVal and val or "err"))
+            end
             SP:Print(string.format("  shadow α=%s  shadow2 α=%s (enabled=%s)",
                 tostring(cfg.orb_shadow_alpha), tostring(cfg.orb_shadow2_alpha), tostring(cfg.orb_shadow2_enabled)))
             if data.bgTex      then SP:Print("  bgTex.α="      .. tostring(data.bgTex:GetAlpha())) end
+            if data.hpEffectMask then
+                SP:Print("  hpEffectMask h=" .. tostring(data.hpEffectMask:GetHeight()))
+            end
+            if data.hpFxClipFrame then
+                SP:Print("  hpFxClip h=" .. tostring(data.hpFxClipFrame:GetHeight()) ..
+                    " shown=" .. tostring(data.hpFxClipFrame:IsShown()))
+            end
+            if data.emptyShadeTex then
+                SP:Print(string.format("  emptyShade shown=%s frameA=%s texA=%s h=%s fl=%s",
+                    tostring(data.emptyShadeFrame and data.emptyShadeFrame:IsShown()),
+                    tostring(data.emptyShadeFrame and data.emptyShadeFrame:GetAlpha()),
+                    tostring(data.emptyShadeTex:GetAlpha()),
+                    tostring(data.emptyShadeTex:GetHeight()),
+                    tostring(data.emptyShadeFrame and data.emptyShadeFrame:GetFrameLevel() or "nil")))
+            end
             if data.shadowTex  then SP:Print("  shadowTex.α="  .. tostring(data.shadowTex:GetAlpha())) end
             if data.shadowTex2 then SP:Print("  shadowTex2.α=" .. tostring(data.shadowTex2:GetAlpha())) end
             if data.singleGlow then SP:Print("  singleGlow.α=" .. tostring(data.singleGlow:GetAlpha())) end
@@ -1447,6 +1636,14 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
         end
         if n == 0 then SP:Print("Aucune plate active.") end
 
+    elseif cmd == "layerlab" or cmd == "lab" then
+        if SP.Orb and SP.Orb.ToggleLayerLab then
+            local ok, err = pcall(SP.Orb.ToggleLayerLab, SP.Orb)
+            if not ok then SP:Print("LayerLab erreur: " .. tostring(err)) end
+        else
+            SP:Print("LayerLab indisponible: Orb non charge.")
+        end
+
     elseif cmd == "colors" then
         -- Diagnostic classe/couleur de chaque plate active (contexte clean → SafeUnitClass fiable)
         SP:Print("=== /snp colors : diagnostic couleur classe ===")
@@ -1463,7 +1660,7 @@ SlashCmdList["SPHEREPLATES"] = function(msg)
             local isPlayer = (data.unitType == "ENEMY_PLAYER" or data.unitType == "FRIENDLY_PLAYER")
             local liveCls = nil
             pcall(function()
-                local okP, ip = pcall(function() return UnitIsPlayer(unit) and true or false end)
+                local okP, ip = true, SP.SafeUnitIsPlayer and SP:SafeUnitIsPlayer(unit) or false
                 local okC, _, c = pcall(UnitClass, unit)
                 SP:Print(string.format("  UnitIsPlayer=%s/%s  UnitClass=%s", tostring(okP), tostring(ip), tostring(c)))
                 if okP and ip and okC and c then liveCls = c end

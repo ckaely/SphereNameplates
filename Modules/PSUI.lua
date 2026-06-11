@@ -3744,12 +3744,27 @@ function SP.UIPlumber:BuildSettings()
                 end
             end
         end, 1)
+        if self:GetUType() == "PLAYER_SELF" then
+            section("Progression XP / Réputation", "resourcesXP", function()
+                add(CreateCheck(c, "Arc XP / réputation", get("moi_xp_ring_enabled", true), set("moi_xp_ring_enabled")), 34, 28)
+                if get("moi_xp_ring_enabled", true)() then
+                    add(CreateCycle(c, "Mode", {
+                        {value="auto",       label="Auto (XP puis réputation)"},
+                        {value="xp",         label="XP seulement"},
+                        {value="reputation", label="Réputation suivie"},
+                        {value="hidden",     label="Masqué"},
+                    }, get("moi_xp_ring_mode", "auto"), set("moi_xp_ring_mode")), 34, 32)
+                    add(CreateSlider(c, "Alpha arc", 0.00, 1.00, 0.02, get("moi_xp_ring_alpha", 0.75), set("moi_xp_ring_alpha")), 34, 48)
+                    add(CreateSlider(c, "Taille arc", 1.05, 1.60, 0.01, get("moi_xp_ring_scale", 1.22), set("moi_xp_ring_scale")), 34, 48)
+                end
+            end, 2)
+        end
         section("Notes", "resourcesNotes", function()
-            local hint = Text(c, "La sphere Moi reutilise les ressources WoW du joueur; les valeurs protegees sont lues sans calcul Lua risqué.", 10, MUTED)
+            local hint = Text(c, "La sphere Moi reutilise les ressources WoW du joueur; les valeurs protegees sont lues sans calcul Lua risqué. L'arc XP devient vert réputation au niveau max (mode Auto); survoler le haut de l'arc affiche le détail.", 10, MUTED)
             hint:SetWidth(COLUMN_WIDTH - 54)
             hint:SetJustifyH("LEFT")
-            add(hint, 34, 44)
-        end, 2)
+            add(hint, 34, 56)
+        end, 3)
     elseif self.page == "moi_behavior" then
         if self:GetUType() ~= "PLAYER_SELF" then
             section("Comportement Moi", "moiBehaviorUnavailable", function()

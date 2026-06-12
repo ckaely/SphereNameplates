@@ -1,15 +1,18 @@
 -------------------------------------------------------------------------------
---  SphereNameplates / Sphere UI — MoiXP (Lot D, v2)
+--  SphereNameplates / Sphere UI — MoiXP (Lot D, v5)
 --
---  Arc de progression XP / réputation autour de la sphère "Moi".
+--  Anneau XP / réputation autour de la sphère "Moi".
 --
---  v2 (BUG-040) : l'approche disque Cooldown rendait un CARRÉ NOIR autour de
---  l'orbe (swipe par défaut carré en 12.x — AP-24 confirmé). Remplacée par un
---  anneau de SEGMENTS (perles ping4) positionnés par trigonométrie : départ en
---  haut (12h), sens horaire. Zéro Cooldown, zéro OnUpdate, textures pures.
+--  v5 (design utilisateur) :
+--  - RAIL : texture media/experience_circle.png (anneau métallique premium)
+--    teinté selon l'état — VIOLET en xp normal, BLEU si rested, VERT réputation.
+--  - PROGRESSION : arc doré/blanc façon aiguille de montre (départ 12h, sens
+--    horaire), rendu par 64 segments rotatés quasi-jointifs (technique V8).
+--  - GAIN : la progression avance en ANIMATION SMOOTH (lerp via Moi:TickHealth).
+--  - LEVEL-UP : l'anneau s'illumine ~3 s (pulse doré) pour marquer le coup.
 --
---  Violet = XP · perles bleues translucides = avance rested · vert = réputation.
---  Toutes les valeurs passent par SP:UntaintNum (secret numbers Midnight).
+--  Toutes les lectures de valeurs passent par CleanNum (UntaintNum durci) :
+--  valeur secrète → anneau caché proprement, jamais de crash.
 -------------------------------------------------------------------------------
 
 local SP = _G["SphereNameplates"]
@@ -19,7 +22,9 @@ SP.MoiXP = SP.MoiXP or {}
 local X = SP.MoiXP
 
 local UNIT = "player"
-local RING_TEX = nil   -- résolu au runtime : SP.SHADOW_CIRCLE_PATH
+local SEG_COUNT = 64
+local WHITE_TEX = "Interface\\Buttons\\WHITE8x8"
+local RAIL_TEX = "Interface\\AddOns\\SphereNameplates\\media\\experience_circle.png"
 
 local function DB()
     return SP.db or {}
@@ -36,7 +41,6 @@ local function Clamp(v, lo, hi)
     return v
 end
 
--- Échappe une valeur potentiellement secrète vers un nombre Lua propre.
 local function CleanNum(raw)
     if raw == nil then return nil end
     if SP.UntaintNum then return SP:UntaintNum(raw) end
@@ -44,10 +48,14 @@ local function CleanNum(raw)
     return ok and n or nil
 end
 
-local COLOR_XP     = {0.58, 0.22, 0.95}
-local COLOR_RESTED = {0.25, 0.55, 1.00}
-local COLOR_REP    = {0.20, 0.78, 0.32}
-local COLOR_OFF    = {0.10, 0.09, 0.14}
+-- Teintes du rail selon l'état (convention Blizzard)
+local RAIL_XP     = {0.56, 0.28, 0.92}   -- violet : xp normale
+local RAIL_RESTED = {0.28, 0.52, 1.00}   -- bleu : repos actif
+local RAIL_REP    = {0.22, 0.72, 0.34}   -- vert : réputation
+-- Progression
+local FILL_GOLD   = {1.00, 0.84, 0.38}   -- doré/blanc : arc de progression
+local FILL_REP    = {0.55, 1.00, 0.62}   -- vert clair : progression réputation
+local LEAD_RESTED = {0.45, 0.70, 1.00}   -- avance rested translucide
 
 function X:IsEnabled()
     local db = DB()
@@ -62,7 +70,7 @@ function X:GetMoiData()
     return SP.UnitFrames and SP.UnitFrames[UNIT]
 end
 
--- ── Lectures de données — UntaintNum sur tout ───────────────────────────────
+-- ── Lectures de données ──────────────────────────────────────────────────────
 
 function X:ResolveMode()
     local cfg = CFG()
@@ -110,59 +118,53 @@ function X:GetReputation()
     local standing = CleanNum(fdata.currentStanding) or 0
     local span = hi - lo
     if span <= 0 then
-        return 1, fdata.name, fdata.reaction, 0, 0   -- rang max → anneau plein
+        return 1, fdata.name, fdata.reaction, 0, 0
     end
     return Clamp((standing - lo) / span, 0, 1), fdata.name, fdata.reaction, standing - lo, span
 end
 
--- ── Construction de l'anneau lisse (v3) ─────────────────────────────────────
--- Même langage visuel que l'anneau ressource : texture shadowcircle pleine,
--- découpée par un masque vertical BOTTOM (pattern BUG-038, prouvé en jeu).
--- L'anneau se remplit de bas en haut avec un DÉGRADÉ vertical ; une piste
--- sombre rend la portion restante lisible. Rested = remplissage translucide
--- en avance, sous le fill principal.
-
--- v4 : progression ANGULAIRE "aiguille de montre" — départ 12h, sens horaire,
--- rendu par 64 segments rectangulaires fins ROTATÉS quasi-continus (technique
--- V8 du castbar circulaire, prouvée en jeu). Net, solide, zéro flou : piste
--- sombre fine en révolution complète + arc coloré qui avance comme une montre.
-local SEG_COUNT = 64
-local WHITE_TEX = "Interface\\Buttons\\WHITE8x8"
+-- ── Construction ─────────────────────────────────────────────────────────────
 
 function X:EnsureRing()
     local data = self:GetMoiData()
     if not (data and data.root and data.orbFrame) then return nil end
     if self.ring and self.ring._data == data then return self.ring end
 
-    -- Sphère reconstruite (changement de taille) : on recrée sur le nouveau root.
     local holder = CreateFrame("Frame", nil, data.root)
-    -- root+31 : PREMIER PLAN, juste au-dessus de l'anneau ressource (+30).
     holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 31)
     holder:SetPoint("CENTER", data.orbFrame, "CENTER")
 
+    -- Rail : l'anneau métallique fourni, teinté selon l'état
+    local rail = holder:CreateTexture(nil, "ARTWORK", nil, 2)
+    rail:SetTexture(RAIL_TEX)
+    rail:SetVertexColor(RAIL_XP[1], RAIL_XP[2], RAIL_XP[3], 1)
+
+    -- Progression : segments rotatés sur le rayon du rail
     local segs = {}
     for i = 1, SEG_COUNT do
-        -- Piste : trait sombre fin, révolution complète toujours visible
-        local track = holder:CreateTexture(nil, "ARTWORK", nil, 2)
-        track:SetTexture(WHITE_TEX)
-        track:SetVertexColor(0.03, 0.03, 0.045, 1)
-        track:SetAlpha(0.55)
-        -- Remplissage : couleur du mode (XP/rested/réputation)
-        local fill = holder:CreateTexture(nil, "ARTWORK", nil, 3)
+        local fill = holder:CreateTexture(nil, "ARTWORK", nil, 4)
         fill:SetTexture(WHITE_TEX)
         fill:SetAlpha(0)
-        segs[i] = { track = track, fill = fill }
+        segs[i] = fill
     end
 
-    -- Flash de gain (AnimationGroup, pas d'OnUpdate)
+    -- Pulse level-up : illumination en boucle, stoppée après ~3 s
+    local levelPulse = holder:CreateAnimationGroup()
+    levelPulse:SetLooping("REPEAT")
+    local lp1 = levelPulse:CreateAnimation("Alpha")
+    lp1:SetFromAlpha(1.0); lp1:SetToAlpha(0.55); lp1:SetDuration(0.35); lp1:SetOrder(1)
+    local lp2 = levelPulse:CreateAnimation("Alpha")
+    lp2:SetFromAlpha(0.55); lp2:SetToAlpha(1.0); lp2:SetDuration(0.35); lp2:SetOrder(2)
+
+    -- Flash de gain léger (one-shot)
     local flash = holder:CreateAnimationGroup()
     local a1 = flash:CreateAnimation("Alpha")
-    a1:SetFromAlpha(1.0); a1:SetToAlpha(0.45); a1:SetDuration(0.10); a1:SetOrder(1)
+    a1:SetFromAlpha(1.0); a1:SetToAlpha(0.55); a1:SetDuration(0.08); a1:SetOrder(1)
     local a2 = flash:CreateAnimation("Alpha")
-    a2:SetFromAlpha(0.45); a2:SetToAlpha(1.0); a2:SetDuration(0.45); a2:SetOrder(2)
+    a2:SetFromAlpha(0.55); a2:SetToAlpha(1.0); a2:SetDuration(0.40); a2:SetOrder(2)
     a2:SetSmoothing("OUT")
 
-    -- Hotspot tooltip : bande supérieure de l'anneau, large et facile à viser
+    -- Hotspot tooltip en haut de l'anneau
     local hotspot = CreateFrame("Frame", nil, holder)
     hotspot:EnableMouse(true)
     hotspot:SetScript("OnEnter", function(f) X:ShowTooltip(f) end)
@@ -171,8 +173,10 @@ function X:EnsureRing()
     self.ring = {
         _data = data,
         holder = holder,
+        rail = rail,
         segs = segs,
         flash = flash,
+        levelPulse = levelPulse,
         hotspot = hotspot,
     }
     holder:Hide()
@@ -183,55 +187,81 @@ function X:Layout(ring)
     local data = ring._data
     local cfg = CFG()
     local orbSize = tonumber(data.orbSize) or tonumber(cfg.size) or 74
-    local radius = orbSize * 0.5 * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
-    if ring._radius == radius then return end
-    ring._radius = radius
-    ring.holder:SetSize(radius * 2 + 8, radius * 2 + 8)
+    local size = orbSize * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
+    if ring._size == size then return end
+    ring._size = size
 
-    -- Géométrie V8 smooth : segments quasi-jointifs (95% du pas angulaire)
-    local segLen = math.max(3, (2 * math.pi * radius / SEG_COUNT) * 0.95)
-    local segThick = math.max(2.5, orbSize * 0.045)
-    for i, s in ipairs(ring.segs) do
-        -- Départ 12h, sens HORAIRE (aiguille de montre)
+    ring.holder:SetSize(size, size)
+    ring.rail:ClearAllPoints()
+    ring.rail:SetSize(size, size)
+    ring.rail:SetPoint("CENTER", ring.holder, "CENTER")
+
+    -- L'anneau de la texture occupe ~87 %% du canvas → rayon des segments calé dessus
+    local radius = size * 0.435
+    local segLen = math.max(3, (2 * math.pi * radius / SEG_COUNT) * 0.96)
+    local segThick = math.max(2.5, size * 0.035)
+    for i, fill in ipairs(ring.segs) do
         local angle = (math.pi * 0.5) - ((i - 0.5) / SEG_COUNT) * 2 * math.pi
         local x = math.cos(angle) * radius
         local y = math.sin(angle) * radius
-        local rotation = -(angle - math.pi * 0.5)
-        s.track:SetSize(segLen, segThick)
-        s.track:ClearAllPoints()
-        s.track:SetPoint("CENTER", ring.holder, "CENTER", x, y)
-        s.track:SetRotation(rotation)
-        s.fill:SetSize(segLen, segThick)
-        s.fill:ClearAllPoints()
-        s.fill:SetPoint("CENTER", ring.holder, "CENTER", x, y)
-        s.fill:SetRotation(rotation)
+        fill:SetSize(segLen, segThick)
+        fill:ClearAllPoints()
+        fill:SetPoint("CENTER", ring.holder, "CENTER", x, y)
+        fill:SetRotation(-(angle - math.pi * 0.5))
     end
 
-    ring.hotspot:SetSize(radius * 1.2, math.max(14, radius * 0.30))
+    ring.hotspot:SetSize(size * 0.6, math.max(14, size * 0.15))
     ring.hotspot:ClearAllPoints()
     ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, radius)
 end
 
--- Allume les segments en sens horaire : p = progression principale (couleur
--- pleine), pLead = avance rested (translucide), reste = piste seule.
-local function PaintClock(ring, p, pLead, mainColor, leadColor, alpha)
-    local lit  = math.floor(Clamp(p, 0, 1) * SEG_COUNT + 0.5)
-    local lead = pLead and math.floor(Clamp(pLead, 0, 1) * SEG_COUNT + 0.5) or lit
-    for i, s in ipairs(ring.segs) do
-        if i <= lit then
-            -- Léger dégradé angulaire : sombre au départ → vif vers la tête
-            local k = 0.70 + 0.45 * (i / math.max(1, lit))
-            s.fill:SetVertexColor(
+-- Peint les segments : litCount pleins (dégradé vers la tête), lead translucide.
+local function PaintFill(ring, litCount, leadCount, mainColor, leadColor, alpha)
+    ring._litCount = litCount
+    for i, fill in ipairs(ring.segs) do
+        if i <= litCount then
+            local k = 0.78 + 0.35 * (i / math.max(1, litCount))
+            fill:SetVertexColor(
                 math.min(1, mainColor[1] * k),
                 math.min(1, mainColor[2] * k),
                 math.min(1, mainColor[3] * k), 1)
-            s.fill:SetAlpha(alpha)
-        elseif i <= lead and leadColor then
-            s.fill:SetVertexColor(leadColor[1], leadColor[2], leadColor[3], 1)
-            s.fill:SetAlpha(alpha * 0.40)
+            fill:SetAlpha(alpha)
+        elseif leadColor and i <= leadCount then
+            fill:SetVertexColor(leadColor[1], leadColor[2], leadColor[3], 1)
+            fill:SetAlpha(alpha * 0.38)
         else
-            s.fill:SetAlpha(0)
+            fill:SetAlpha(0)
         end
+    end
+end
+
+local function RepaintFromDisplay(ring, displayP)
+    local lit  = math.floor(Clamp(displayP, 0, 1) * SEG_COUNT + 0.5)
+    local lead = ring._leadP and math.floor(Clamp(ring._leadP, 0, 1) * SEG_COUNT + 0.5) or lit
+    PaintFill(ring, lit, lead, ring._mainColor or FILL_GOLD,
+        ring._leadColor, ring._alpha or 0.9)
+end
+
+-- ── Animation smooth (appelée ~60 FPS par Moi:TickHealth) ───────────────────
+
+function X:Tick()
+    local ring = self.ring
+    if not (ring and ring.holder and ring.holder:IsShown()) then return end
+    local target = self._targetP
+    if target == nil then return end
+    local disp = self._displayP
+    if disp == nil then return end
+    local diff = target - disp
+    if math.abs(diff) > 0.0004 then
+        disp = disp + diff * 0.07   -- progression douce (~1 s pour un gros gain)
+        self._displayP = disp
+        local lit = math.floor(Clamp(disp, 0, 1) * SEG_COUNT + 0.5)
+        if lit ~= ring._litCount then
+            RepaintFromDisplay(ring, disp)
+        end
+    elseif disp ~= target then
+        self._displayP = target
+        RepaintFromDisplay(ring, target)
     end
 end
 
@@ -254,26 +284,71 @@ function X:Update()
     local alpha = Clamp(cfg.moi_xp_ring_alpha, 0, 1)
     self:Layout(ring)
 
+    local railColor, p, leadP
     if mode == "xp" then
-        local p, pRested = self:GetXP()
-        if not p then ring.holder:Hide() return end
-        PaintClock(ring, p, pRested, COLOR_XP, COLOR_RESTED, alpha)
+        local xpP, restedP, _, _, rested = self:GetXP()
+        if not xpP then ring.holder:Hide() return end
+        p = xpP
+        leadP = (restedP and restedP > xpP + 0.002) and restedP or nil
+        railColor = (rested and rested > 0) and RAIL_RESTED or RAIL_XP
+        ring._mainColor = FILL_GOLD
+        ring._leadColor = leadP and LEAD_RESTED or nil
         ring._mode = "xp"
     else
-        local p, name = self:GetReputation()
-        if not p then ring.holder:Hide() return end
-        PaintClock(ring, p, nil, COLOR_REP, nil, alpha)
+        local repP, name = self:GetReputation()
+        if not repP then ring.holder:Hide() return end
+        p = repP
+        leadP = nil
+        railColor = RAIL_REP
+        ring._mainColor = FILL_REP
+        ring._leadColor = nil
         ring._mode = "reputation"
         ring._repName = name
+    end
+
+    ring._alpha = alpha
+    ring._leadP = leadP
+    -- Rail teinté (sauf pendant l'illumination level-up qui force le doré)
+    if not self._levelUpActive then
+        ring.rail:SetVertexColor(railColor[1], railColor[2], railColor[3], 1)
+        ring.rail:SetAlpha(math.min(1, alpha * 0.95))
+    end
+
+    -- Cible de progression : le Tick anime _displayP vers _targetP.
+    self._targetP = p
+    if self._displayP == nil then
+        self._displayP = p          -- premier affichage : pas d'animation
+        RepaintFromDisplay(ring, p)
+    elseif self._displayP > p + 0.01 then
+        -- Régression (level-up : la barre repart de 0) → snap propre
+        self._displayP = 0
     end
     ring.holder:Show()
 end
 
 function X:FlashGain()
     local ring = self.ring
-    if ring and ring.holder and ring.holder:IsShown() and ring.flash then
+    if ring and ring.holder and ring.holder:IsShown() and ring.flash and not self._levelUpActive then
         pcall(ring.flash.Stop, ring.flash)
         pcall(ring.flash.Play, ring.flash)
+    end
+end
+
+-- Illumination de passage de niveau : rail doré pulsé pendant ~3 s.
+function X:LevelUpFlash()
+    local ring = self.ring
+    if not (ring and ring.holder) then return end
+    self._levelUpActive = true
+    ring.rail:SetVertexColor(1.0, 0.86, 0.30, 1)
+    ring.rail:SetAlpha(1)
+    pcall(ring.levelPulse.Play, ring.levelPulse)
+    if C_Timer then
+        C_Timer.After(3.0, function()
+            X._levelUpActive = nil
+            if X.ring and X.ring.levelPulse then pcall(X.ring.levelPulse.Stop, X.ring.levelPulse) end
+            if X.ring and X.ring.holder then X.ring.holder:SetAlpha(1) end
+            X:Update()
+        end)
     end
 end
 
@@ -295,7 +370,7 @@ function X:ShowTooltip(owner)
                 if rested and rested > 0 then
                     GameTooltip:AddDoubleLine("Repos",
                         string.format("+%d", rested), 0.8, 0.8, 0.8,
-                        COLOR_RESTED[1], COLOR_RESTED[2], COLOR_RESTED[3])
+                        RAIL_RESTED[1], RAIL_RESTED[2], RAIL_RESTED[3])
                 end
             end
         else
@@ -336,6 +411,9 @@ function X:EnsureEventFrame()
         pcall(f.RegisterEvent, f, ev)
     end
     f:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LEVEL_UP" then
+            X:LevelUpFlash()
+        end
         X:Update()
         if event == "PLAYER_XP_UPDATE" or event == "UPDATE_FACTION" then
             X:FlashGain()

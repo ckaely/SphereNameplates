@@ -1802,6 +1802,11 @@ SP.DEFAULTS = { profile = {
         moi_resource_ring_min_alpha=0.10,
         -- "always" (défaut) = toujours visible; "smart" = combat ou ~5s après un sort; "combat" = combat seul
         moi_resource_ring_visibility="always",
+        -- Valeur numérique de la ressource principale (couleur de la ressource)
+        moi_resource_text_enabled=true,
+        moi_resource_text_size=13,
+        moi_resource_text_x=0,
+        moi_resource_text_y=12,
         -- Arc XP / réputation autour de la sphère (Lot D)
         moi_xp_ring_enabled=true,
         moi_xp_ring_mode="auto",      -- auto | xp | reputation | hidden

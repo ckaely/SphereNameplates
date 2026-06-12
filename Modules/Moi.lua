@@ -344,6 +344,50 @@ function M:CreateClassPowerText(data)
     data.moiClassPowerText = fs
 end
 
+-- Valeur numérique de la ressource PRINCIPALE (rage/mana/énergie...), colorée
+-- selon le type, dans le bas de l'orbe. Position/taille réglables (PSUI).
+function M:CreateResourceValueText(data)
+    if data.moiResourceText or not data.root then return end
+    local frame = CreateFrame("Frame", nil, data.root)
+    frame:SetAllPoints(data.orbFrame or data.root)
+    frame:SetFrameLevel((data.root:GetFrameLevel() or 1) + 32)
+    local fs = frame:CreateFontString(nil, "OVERLAY")
+    fs:SetFont("Fonts\\FRIZQT__.TTF", 13, "OUTLINE")
+    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(1, -1)
+    fs:Hide()
+    data.moiResourceText = fs
+    data._moiResourceTextFrame = frame
+end
+
+function M:UpdateResourceValueText(data, ptype, rawCur)
+    local fs = data and data.moiResourceText
+    if not fs then return end
+    local cfg = CFG()
+    if cfg.moi_resource_text_enabled == false or ptype == nil or rawCur == nil then
+        fs:Hide()
+        return
+    end
+    -- Police / position réglables
+    local size = Clamp(cfg.moi_resource_text_size, 8, 24)
+    if fs._lastSize ~= size then
+        fs._lastSize = size
+        pcall(fs.SetFont, fs, "Fonts\\FRIZQT__.TTF", size, "OUTLINE")
+    end
+    local ox = tonumber(cfg.moi_resource_text_x) or 0
+    local oy = tonumber(cfg.moi_resource_text_y) or 12
+    if fs._lastOx ~= ox or fs._lastOy ~= oy then
+        fs._lastOx, fs._lastOy = ox, oy
+        fs:ClearAllPoints()
+        fs:SetPoint("BOTTOM", data.orbFrame or data.root, "BOTTOM", ox, oy)
+    end
+    -- Couleur de la ressource + valeur écrite côté C (secret-safe)
+    local r, g, b = PowerColor(ptype)
+    fs:SetTextColor(r, g, b, 1)
+    local okFmt = pcall(fs.SetFormattedText, fs, "%d", rawCur)
+    if okFmt then fs:Show() else fs:Hide() end
+end
+
 local function PlayerClassPowerType()
     local ok, class = pcall(function() return select(2, UnitClass(UNIT)) end)
     if not ok then class = nil end
@@ -557,6 +601,15 @@ function M:UpdateResourceRing()
     local ring = data.moiResourceRing
     if not ring then return end
     local cfg = CFG()
+    -- Texte de valeur : indépendant du gating de l'anneau — mis à jour
+    -- inconditionnellement tant que la sphère est visible.
+    local ptype, rawCur, rawMax = self:GetPrimaryPowerRaw()
+    if self:ShouldShow() then
+        self:UpdateResourceValueText(data, ptype, rawCur)
+    else
+        self:UpdateResourceValueText(data, nil, nil)
+    end
+
     if cfg.moi_resource_ring_enabled == false or cfg.borderStyle ~= "shadowcircle" or not self:ShouldShow() then
         ring._targetAlpha = 0
         ring.holder:SetAlpha(0)
@@ -564,7 +617,6 @@ function M:UpdateResourceRing()
         return
     end
 
-    local ptype, rawCur, rawMax = self:GetPrimaryPowerRaw()
     if not ptype then
         ring._targetAlpha = 0
         ring.holder:SetAlpha(0)
@@ -833,6 +885,7 @@ function M:EnsureData(live)
         if okCB and cb then data.castbar = cb end
     end
     self:CreateClassPowerText(data)
+    self:CreateResourceValueText(data)
     self:EnsureResourceRing(data)
     self:EnsureBehaviorGlow(data)
     return data
@@ -882,6 +935,9 @@ function M:TickCast(now)
 end
 
 function M:TickHealth()
+    -- Animation smooth de l'anneau XP — AVANT le guard targetHP (qui peut
+    -- bloquer si les HP sont secrets, cf. leçon de l'anneau ressource).
+    if SP.MoiXP and SP.MoiXP.Tick then pcall(SP.MoiXP.Tick, SP.MoiXP) end
     local data = self.data
     if not (data and data.targetHP ~= nil and SP.Orb) then return end
     local cfg = CFG()

@@ -224,8 +224,13 @@ function T:ApplyBlizzardTargetFrame()
     for _, frame in ipairs(BlizzardTargetFrames()) do
         if hide then
             frame._snpTufHidden = true
-            if not frame._snpTufHooked then
-                frame._snpTufHooked = true
+            -- Kill DÉFINITIF : Blizzard re-Show la frame sur PLAYER_TARGET_CHANGED
+            -- (y compris en combat où notre Hide serait bloqué → "parfois visible").
+            -- Sans ses events, elle ne réapparaît plus jamais (pattern ElvUI/SUF).
+            -- Réactivation = /reload après désactivation de l'option.
+            if not frame._snpTufKilled then
+                frame._snpTufKilled = true
+                pcall(frame.UnregisterAllEvents, frame)
                 pcall(frame.HookScript, frame, "OnShow", function(f)
                     if f._snpTufHidden and not IsCombatLocked() then
                         pcall(f.Hide, f)

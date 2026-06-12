@@ -791,9 +791,11 @@ function M:UpdateCooldownSkin(btn)
         self:ClearCooldownSkin(btn)
         return
     end
+    -- cdText custom retiré : les chiffres NATIFS du Cooldown (moteur C)
+    -- affichent le temps restant, y compris quand les valeurs sont secrètes.
     if btn.cdText then
-        btn.cdText:SetText(FormatCooldownTime(remaining))
-        btn.cdText:Show()
+        btn.cdText:SetText("")
+        btn.cdText:Hide()
     end
     if btn.cooldownShade and SkinEnabled(cfg) and cfg.cooldownShade ~= false then
         btn.cooldownShade:SetVertexColor(0, 0, 0, Clamp(cfg.cooldownShadeAlpha, 0, 1) * remainingRatio)
@@ -926,11 +928,16 @@ function M:CreateButton(bar, barIndex, buttonIndex)
 
     b.cooldown = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
     b.cooldown:SetAllPoints(b.icon)
-    -- Swipe CIRCULAIRE : le swipe par défaut est carré (et peut rendre un
-    -- carré gris en 12.x, cf. BUG-002). Le masque circulaire comme texture
-    -- de swipe limite l'assombrissement au disque de l'icône.
-    pcall(b.cooldown.SetSwipeTexture, b.cooldown, ACTION_BUTTON_MASK)
-    pcall(b.cooldown.SetSwipeColor, b.cooldown, 0, 0, 0, 0.65)
+    -- BUG-042 : tout swipe (custom OU défaut) est cassé/carré en 12.x sur nos
+    -- boutons ronds → swipe coupé. Le TEMPS RESTANT est rendu par les chiffres
+    -- NATIFS du moteur (SetHideCountdownNumbers(false)) : ils s'affichent même
+    -- quand GetActionCooldown renvoie des secret numbers, là où tout texte
+    -- custom Lua serait impossible. L'ombre/anneau custom (cooldownShade)
+    -- complète quand les valeurs sont lisibles.
+    pcall(b.cooldown.SetDrawSwipe, b.cooldown, false)
+    pcall(b.cooldown.SetDrawEdge, b.cooldown, false)
+    pcall(b.cooldown.SetDrawBling, b.cooldown, false)
+    pcall(b.cooldown.SetHideCountdownNumbers, b.cooldown, false)
 
     b.cdText = b:CreateFontString(nil, "OVERLAY")
     b.cdText:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
@@ -2292,5 +2299,11 @@ end
 function M:Init()
     self:EnsureDefaults()
     self:EnsureEventFrame()
+    -- Les chiffres natifs de recharge exigent la CVar globale : c'est le
+    -- réglage Blizzard "Afficher les temps de recharge" — on l'active quand
+    -- nos barres sont actives (hors combat, demandé par l'utilisateur).
+    if self:IsEnabled() and not InCombat() then
+        pcall(SetCVar, "countdownForCooldowns", "1")
+    end
     self:Refresh()
 end

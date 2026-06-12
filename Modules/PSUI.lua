@@ -4061,6 +4061,12 @@ function SP.UIPlumber:BuildSettings()
             add(CreateSlider(c, "Decalage ressource Y", -80, 80, 1, get("powerOffsetY", 0), set("powerOffsetY")), 34, 48)
             if self:GetUType() == "PLAYER_SELF" then
                 add(CreateCheck(c, "Afficher ressource de classe", get("class_power_enabled", true), set("class_power_enabled")), 34, 28)
+                add(CreateCheck(c, "Valeur de la ressource (texte)", get("moi_resource_text_enabled", true), set("moi_resource_text_enabled")), 34, 28)
+                if get("moi_resource_text_enabled", true)() then
+                    add(CreateSlider(c, "Taille texte ressource", 8, 24, 1, get("moi_resource_text_size", 13), set("moi_resource_text_size")), 34, 48)
+                    add(CreateSlider(c, "Texte ressource X", -80, 80, 1, get("moi_resource_text_x", 0), set("moi_resource_text_x")), 34, 48)
+                    add(CreateSlider(c, "Texte ressource Y", -40, 80, 1, get("moi_resource_text_y", 12), set("moi_resource_text_y")), 34, 48)
+                end
                 add(CreateCheck(c, "Ressource dans Shadow Circle", get("moi_resource_ring_enabled", true), set("moi_resource_ring_enabled")), 34, 28)
                 if get("moi_resource_ring_enabled", true)() then
                     add(CreateCycle(c, "Visibilite anneau", {

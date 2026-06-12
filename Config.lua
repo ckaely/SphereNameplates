@@ -1806,7 +1806,7 @@ SP.DEFAULTS = { profile = {
         moi_xp_ring_enabled=true,
         moi_xp_ring_mode="auto",      -- auto | xp | reputation | hidden
         moi_xp_ring_alpha=0.75,
-        moi_xp_ring_scale=1.10,       -- collé à l'orbe, juste au-dessus de l'anneau ressource
+        moi_xp_ring_scale=1.16,       -- juste au-dessus de l'anneau ressource (1.08), sans chevauchement
         moi_behavior_glow_enabled=true,
         moi_behavior_glow_aggro=true,
         moi_behavior_glow_cast=true,

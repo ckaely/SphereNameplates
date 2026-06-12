@@ -107,6 +107,18 @@ function M:EnsureSavedDefaults()
             db.moi_ring_defaults_migrated = 1
         end
     end
+    -- v2 : l'anneau XP horloge passe à 1.16 (1.10 chevauchait l'anneau
+    -- ressource à 1.08). Ne touche que les valeurs issues des défauts.
+    if db.moi_ring_defaults_migrated2 ~= 1 then
+        local cfg = SP.db and SP.db.PLAYER_SELF
+        if cfg then
+            local s = tonumber(cfg.moi_xp_ring_scale)
+            if s == nil or math.abs(s - 1.10) < 0.001 or math.abs(s - 1.22) < 0.001 then
+                cfg.moi_xp_ring_scale = 1.16
+            end
+            db.moi_ring_defaults_migrated2 = 1
+        end
+    end
 end
 
 function M:ShouldShow()
@@ -379,11 +391,14 @@ end
 -- côté C, et le fillMask ancre son TOP sur la texture du driver (pattern
 -- hpEffectMask/BUG-026 : géométrie C-side, zéro arithmétique Lua).
 function M:CreateResourceHemisphere(holder, side)
+    -- ping4 = ANNEAU FIN ET NET (retour utilisateur : le shadowcircle épais/
+    -- flou est réservé à la bordure de classe; les ressources sont un trait
+    -- propre collé à l'orbe, comme le mockup d'origine).
     local tex = holder:CreateTexture(nil, "ARTWORK", nil, 5)
-    tex:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    tex:SetTexture("Interface\\Cooldown\\ping4")
     tex:SetBlendMode("ADD")
     tex:SetVertexColor(1, 1, 1, 1)
-    tex:SetAlpha(0.85)
+    tex:SetAlpha(0.95)
 
     -- Driver C-side : StatusBar vertical invisible. Sa StatusBarTexture sert
     -- d'ancre TOP au masque de remplissage — la géométrie suit value/max sans
@@ -416,13 +431,13 @@ function M:EnsureResourceRing(data)
     holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 30)
     holder:SetPoint("CENTER", data.orbFrame or data.root, "CENTER")
 
-    -- Piste sombre : rend la portion NON remplie lisible et distingue
-    -- l'anneau ressource de la bordure classe (BLEND sombre, sous les fills).
+    -- Piste : même anneau fin ping4, sombre — la portion non remplie reste
+    -- lisible sans le halo épais du shadowcircle.
     local track = holder:CreateTexture(nil, "ARTWORK", nil, 4)
-    track:SetTexture(SP.SHADOW_CIRCLE_PATH or (SP.MEDIA and (SP.MEDIA .. "shadowcircle")) or "Interface\\Buttons\\UI-ActionButton-Border")
+    track:SetTexture("Interface\\Cooldown\\ping4")
     track:SetBlendMode("BLEND")
-    track:SetVertexColor(0.04, 0.04, 0.07, 1)
-    track:SetAlpha(0.60)
+    track:SetVertexColor(0.05, 0.05, 0.08, 1)
+    track:SetAlpha(0.70)
 
     data.moiResourceRing = {
         holder = holder,
@@ -561,13 +576,18 @@ function M:UpdateResourceRing()
     local alpha = Clamp(cfg.moi_resource_ring_alpha, 0, 1)
     local minAlpha = Clamp(cfg.moi_resource_ring_min_alpha, 0, 0.80)
     local classType, cRaw, cRawMax, classKind = self:GetClassPowerRaw()
-    -- Split si une ressource de classe existe ET que son max est exploitable.
-    -- Comparaison en pcall : si le max est secret (illisible), on suppose
-    -- utilisable — le driver C-side rendra la vérité de toute façon.
+    -- Règle utilisateur : UNE seule ressource active = les DEUX côtés.
+    -- Split uniquement si la ressource de classe a un max exploitable ET une
+    -- charge actuelle > 0 (un côté vide en permanence = anneau perçu cassé).
+    -- Comparaisons en pcall : valeur secrète illisible → on suppose vrai,
+    -- le driver C-side rendra la vérité.
     local classUsable = false
     if classType then
-        local okCmp, usable = pcall(function() return (tonumber(cRawMax) or 0) > 0 end)
-        classUsable = (not okCmp) or usable == true
+        local okMax, maxOK = pcall(function() return (tonumber(cRawMax) or 0) > 0 end)
+        local okCur, curOK = pcall(function() return (tonumber(cRaw) or 0) > 0 end)
+        local maxUsable = (not okMax) or maxOK == true
+        local curUsable = (not okCur) or curOK == true
+        classUsable = maxUsable and curUsable
     end
     local split = cfg.moi_resource_ring_split ~= false and classUsable
 

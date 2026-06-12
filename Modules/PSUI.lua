@@ -185,6 +185,17 @@ local function UnitframePageKeys(utype)
             "moi_behavior", "position", "actionbars"}
 end
 
+-- Arbre Nameplates : 5 groupes plats (catégorie × type d'unité) — remplace
+-- la ligne ENNEMIS/NEUTRES/ALLIES + le dropdown PNJ/Joueurs.
+local NP_TREE = {
+    {key="np_enemy_npc",    category="enemy",    kind="npc",    label="Ennemis — PNJ"},
+    {key="np_enemy_player", category="enemy",    kind="player", label="Ennemis — Joueurs"},
+    {key="np_neutral",      category="neutral",  kind="npc",    label="Neutres"},
+    {key="np_friendly_npc", category="friendly", kind="npc",    label="Alliés — PNJ"},
+    {key="np_friendly_player", category="friendly", kind="player", label="Alliés — Joueurs"},
+}
+local NP_PAGES = {"sphere", "text", "life", "castbar", "auras", "target", "effects", "position"}
+
 
 local PAGES = {
     {key="sphere",  label="Sphere"},
@@ -1963,10 +1974,14 @@ function SP.UIPlumber:BuildWindow()
         return r
     end
 
-    function SP.UIPlumber:RefreshUnitFrameTree()
+    -- Arbre de navigation générique (panneau gauche) — toutes les familles.
+    -- unitframes/nameplates : groupes dépliables + sous-pages.
+    -- interface/spdebug : items plats (sections directes).
+    function SP.UIPlumber:RefreshNavTree()
         local w = self.win
         if not (w and w.treeNav) then return end
-        self._ufExpanded = self._ufExpanded or { [self.category] = true }
+        local family = self:GetFamily()
+        self._navExpanded = self._navExpanded or {}
         local rows = w.treeRows
         local idx, y = 0, -46
 
@@ -1983,87 +1998,157 @@ function SP.UIPlumber:BuildWindow()
             return r
         end
 
-        for _, grp in ipairs(UF_TREE) do
-            local expanded = self._ufExpanded[grp.category] == true
-            local isActiveGrp = self.category == grp.category
+        -- Rangée simple (item plat ou sous-page)
+        local function pageRow(label, iconKey, isActive, indent, onClick)
+            local p = acquire()
+            p:SetHeight(30)
+            p.bg:SetVertexColor(0.05, 0.04, 0.028, isActive and 0.90 or 0)
+            p.chevron:SetText("")
+            local iconDef = iconKey and SIDE_ICONS and SIDE_ICONS[iconKey]
+            local texture = type(iconDef) == "table" and iconDef.texture or nil
+            if texture then
+                SafeTexture(p.icon, texture)
+                p.icon:ClearAllPoints()
+                p.icon:SetPoint("LEFT", p, "LEFT", indent - 28, 0)
+                p.icon:Show()
+            else
+                p.icon:Hide()
+            end
+            p.label:ClearAllPoints()
+            p.label:SetPoint("LEFT", p, "LEFT", indent, 0)
+            p.label:SetText(label)
+            p.label:SetFontObject(GameFontNormalSmall)
+            if isActive then
+                p.label:SetTextColor(1, 1, 1, 1)
+            else
+                p.label:SetTextColor(0.72, 0.66, 0.56, 1)
+            end
+            p.accent:SetVertexColor(0.95, 0.58, 0.18, isActive and 1 or 0)
+            p.underline:SetVertexColor(0, 0, 0, 0)
+            p:SetScript("OnClick", onClick)
+            y = y - 32
+        end
 
+        -- Rangée de groupe dépliable
+        local function groupRow(label, expanded, isActive, onClick)
             local g = acquire()
             g:SetHeight(38)
-            g.bg:SetVertexColor(0.055, 0.042, 0.028, isActiveGrp and 0.85 or 0.45)
+            g.bg:SetVertexColor(0.055, 0.042, 0.028, isActive and 0.85 or 0.45)
             g.chevron:SetText(expanded and "v" or ">")
             g.chevron:SetTextColor(0.95, 0.72, 0.25, 1)
             g.icon:Hide()
             g.label:ClearAllPoints()
             g.label:SetPoint("LEFT", g, "LEFT", 34, 0)
-            g.label:SetText(grp.label)
+            g.label:SetText(label)
             g.label:SetFontObject(GameFontNormal)
-            if isActiveGrp then
+            if isActive then
                 g.label:SetTextColor(1, 1, 1, 1)
             else
                 g.label:SetTextColor(1.0, 0.82, 0.0, 1)
             end
-            g.accent:SetVertexColor(0.95, 0.58, 0.18, isActiveGrp and 1 or 0)
+            g.accent:SetVertexColor(0.95, 0.58, 0.18, isActive and 1 or 0)
             g.underline:SetVertexColor(0.85, 0.50, 0.18, expanded and 0.35 or 0)
-            g:SetScript("OnClick", function()
-                -- Replier les autres : un seul groupe ouvert = lecture claire
-                local wasExpanded = self._ufExpanded[grp.category] == true
-                for _, other in ipairs(UF_TREE) do
-                    self._ufExpanded[other.category] = false
-                end
-                self._ufExpanded[grp.category] = not wasExpanded or self.category ~= grp.category
-                if self.category ~= grp.category then
-                    self.category = grp.category
-                    self.unitKind[grp.category] = "self"
-                    local keys = UnitframePageKeys(grp.utype)
-                    local pageOK = false
-                    for _, k in ipairs(keys) do
-                        if k == self.page then pageOK = true break end
-                    end
-                    if not pageOK then self.page = keys[1] end
-                end
-                self:RefreshAll()
-            end)
+            g:SetScript("OnClick", onClick)
             y = y - 40
+        end
 
-            if expanded then
-                for _, key in ipairs(UnitframePageKeys(grp.utype)) do
-                    local p = acquire()
-                    p:SetHeight(30)
-                    local isActive = isActiveGrp and self.page == key
-                    p.bg:SetVertexColor(0.05, 0.04, 0.028, isActive and 0.90 or 0)
-                    p.chevron:SetText("")
-                    local iconDef = SIDE_ICONS and SIDE_ICONS[key]
-                    local texture = type(iconDef) == "table" and iconDef.texture or nil
-                    if texture then
-                        SafeTexture(p.icon, texture)
-                        p.icon:Show()
-                        p.label:ClearAllPoints()
-                        p.label:SetPoint("LEFT", p, "LEFT", 62, 0)
-                    else
-                        p.icon:Hide()
-                        p.label:ClearAllPoints()
-                        p.label:SetPoint("LEFT", p, "LEFT", 62, 0)
-                    end
-                    p.label:SetText(PageLabelByKey(key))
-                    p.label:SetFontObject(GameFontNormalSmall)
-                    if isActive then
-                        p.label:SetTextColor(1, 1, 1, 1)
-                    else
-                        p.label:SetTextColor(0.72, 0.66, 0.56, 1)
-                    end
-                    p.accent:SetVertexColor(0.95, 0.58, 0.18, isActive and 1 or 0)
-                    p.underline:SetVertexColor(0, 0, 0, 0)
-                    p:SetScript("OnClick", function()
-                        if self.category ~= grp.category then
-                            self.category = grp.category
-                            self.unitKind[grp.category] = "self"
-                        end
-                        self.page = key
-                        self:RefreshAll()
-                    end)
-                    y = y - 32
+        -- Garde-fou de page lors d'un changement de groupe
+        local function ensurePage(keys)
+            for _, k in ipairs(keys) do
+                if k == self.page then return end
+            end
+            self.page = keys[1]
+        end
+
+        if family == "unitframes" then
+            w.treeNav.title:SetText("UNITFRAMES")
+            for _, grp in ipairs(UF_TREE) do
+                local gKey = "uf:" .. grp.category
+                local isActive = self.category == grp.category
+                if self._navExpanded[gKey] == nil and isActive then
+                    self._navExpanded[gKey] = true
                 end
-                y = y - 6
+                local expanded = self._navExpanded[gKey] == true
+                groupRow(grp.label, expanded, isActive, function()
+                    local was = self._navExpanded[gKey] == true
+                    for _, o in ipairs(UF_TREE) do self._navExpanded["uf:" .. o.category] = false end
+                    self._navExpanded[gKey] = (not was) or self.category ~= grp.category
+                    if self.category ~= grp.category then
+                        self.category = grp.category
+                        self.unitKind[grp.category] = "self"
+                        ensurePage(UnitframePageKeys(grp.utype))
+                    end
+                    self:RefreshAll()
+                end)
+                if expanded then
+                    for _, key in ipairs(UnitframePageKeys(grp.utype)) do
+                        pageRow(PageLabelByKey(key), key, isActive and self.page == key, 62, function()
+                            if self.category ~= grp.category then
+                                self.category = grp.category
+                                self.unitKind[grp.category] = "self"
+                            end
+                            self.page = key
+                            self:RefreshAll()
+                        end)
+                    end
+                    y = y - 6
+                end
+            end
+
+        elseif family == "nameplates" then
+            w.treeNav.title:SetText("NAMEPLATES")
+            for _, grp in ipairs(NP_TREE) do
+                local gKey = "np:" .. grp.key
+                local isActive = self.category == grp.category
+                    and (self.unitKind[grp.category] or "npc") == grp.kind
+                if self._navExpanded[gKey] == nil and isActive then
+                    self._navExpanded[gKey] = true
+                end
+                local expanded = self._navExpanded[gKey] == true
+                groupRow(grp.label, expanded, isActive, function()
+                    local was = self._navExpanded[gKey] == true
+                    for _, o in ipairs(NP_TREE) do self._navExpanded["np:" .. o.key] = false end
+                    self._navExpanded[gKey] = (not was) or not isActive
+                    if not isActive then
+                        self.category = grp.category
+                        self.unitKind[grp.category] = grp.kind
+                        ensurePage(NP_PAGES)
+                    end
+                    self:RefreshAll()
+                end)
+                if expanded then
+                    for _, key in ipairs(NP_PAGES) do
+                        pageRow(PageLabelByKey(key), key, isActive and self.page == key, 62, function()
+                            if not isActive then
+                                self.category = grp.category
+                                self.unitKind[grp.category] = grp.kind
+                            end
+                            self.page = key
+                            self:RefreshAll()
+                        end)
+                    end
+                    y = y - 6
+                end
+            end
+
+        elseif family == "interface" then
+            w.treeNav.title:SetText("INTERFACE")
+            for _, item in ipairs(OPTIONS_NAV) do
+                pageRow(item.label, nil, (self.optionsPage or "general") == item.key, 34, function()
+                    self.optionsPage = item.key
+                    self:RefreshAll()
+                end)
+            end
+
+        elseif family == "spdebug" then
+            w.treeNav.title:SetText("SPDEBUG")
+            for _, item in ipairs(SPDEBUG_NAV) do
+                pageRow(item.label, nil, (self.spdebugPage or "overview") == item.key, 34, function()
+                    self.spdebugPage = item.key
+                    self.page = "spdebug"
+                    self:BuildSettings()
+                    self:RefreshHeader()
+                end)
             end
         end
 
@@ -4246,12 +4331,12 @@ function SP.UIPlumber:RefreshHeader()
     for _, b in pairs(win.specialButtons or {}) do b:Hide() end
 
     local entry = self:GetUnitEntry()
-    -- UnitFrames : navigation par ARBRE à gauche — le sideNav droit (contexte
-    -- dropdown + pages verticales) est entièrement remplacé.
-    local isTree = family == "unitframes"
-    local showContext = family == "nameplates"
-    local showSideNav = family ~= "modules" and not isTree
-    if win.sideNav then win.sideNav:SetShown(showSideNav) end
+    -- Navigation par ARBRE à gauche pour TOUTES les familles (sauf Modules
+    -- qui n'a pas de sous-navigation). Le sideNav droit historique (dropdown
+    -- contexte + colonnes de pages) est entièrement retiré.
+    local isTree = family ~= "modules"
+    local showContext = false
+    if win.sideNav then win.sideNav:Hide() end
     if win.treeNav then win.treeNav:SetShown(isTree) end
     if win.scroll then
         win.scroll:ClearAllPoints()
@@ -4263,7 +4348,7 @@ function SP.UIPlumber:RefreshHeader()
         end
     end
     if isTree then
-        self:RefreshUnitFrameTree()
+        self:RefreshNavTree()
     end
     if win.contextTitle then
         win.contextTitle:Hide()
@@ -4320,24 +4405,10 @@ function SP.UIPlumber:RefreshHeader()
         return false
     end
 
+    -- Interface / SPDebug : sections servies par l'arbre de gauche; les
+    -- anciens specialButtons du sideNav droit restent cachés.
     if family == "interface" then
         for _, b in pairs(win.catButtons or {}) do b:Hide() end
-        if win.pageContainer then
-            win.pageContainer:ClearAllPoints()
-            win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -22)
-        end
-        local idx = 0
-        for _, item in ipairs(OPTIONS_NAV) do
-            local b = win.specialButtons and win.specialButtons["interface_" .. item.key]
-            if b then
-                idx = idx + 1
-                b:ClearAllPoints()
-                b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
-                if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
-                b:SetShown(true)
-                b:SetSelected((self.optionsPage or "general") == item.key)
-            end
-        end
         win.status:SetText("Interface  |  options globales")
         return
     elseif family == "modules" then
@@ -4346,41 +4417,16 @@ function SP.UIPlumber:RefreshHeader()
         return
     elseif family == "spdebug" then
         for _, b in pairs(win.catButtons or {}) do b:Hide() end
-        if win.pageContainer then
-            win.pageContainer:ClearAllPoints()
-            win.pageContainer:SetPoint("TOP", win.sideNav, "TOP", 0, -22)
-        end
-        local idx = 0
-        for _, item in ipairs(SPDEBUG_NAV) do
-            local b = win.specialButtons and win.specialButtons["spdebug_" .. item.key]
-            if b then
-                idx = idx + 1
-                b:ClearAllPoints()
-                b:SetPoint("TOP", win.pageContainer, "TOP", 0, -((idx - 1) * 48))
-                if win.sideNav then pcall(b.SetFrameLevel, b, win.sideNav:GetFrameLevel() + 10 + idx) end
-                b:SetShown(true)
-                b:SetSelected((self.spdebugPage or "overview") == item.key)
-            end
-        end
         win.status:SetText("SPDebug  |  diagnostic")
         return
     end
 
-    local last
+    -- La ligne ENNEMIS/NEUTRES/ALLIES est remplacée par les groupes de
+    -- l'arbre de gauche (Ennemis — PNJ, Ennemis — Joueurs, ...).
     for _, cat in ipairs(CATEGORY) do
         if not IsSpecialCategory(cat.key) then
             local b = win.catButtons and win.catButtons[cat.key]
-            if b then
-                local visible = family == "nameplates"
-                b:SetShown(visible)
-                b:ClearAllPoints()
-                if visible then
-                    if last then b:SetPoint("LEFT", last, "RIGHT", 18, 0)
-                    else b:SetPoint("TOPLEFT", win.header, "TOPLEFT", 36, -44) end
-                    b:SetSelected(cat.key == self.category)
-                    last = b
-                end
-            end
+            if b then b:Hide() end
         end
     end
 

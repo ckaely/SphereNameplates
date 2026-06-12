@@ -122,34 +122,12 @@ end
 -- sombre rend la portion restante lisible. Rested = remplissage translucide
 -- en avance, sous le fill principal.
 
--- Texture de l'anneau XP : ping4 = CERCLE FIN ET NET (pas le shadow circle
--- épais/flou réservé à la bordure de classe et à l'anneau ressource).
--- Distinction visuelle immédiate : XP = trait fin, ressources = anneau épais.
-local XP_RING_TEX = "Interface\\Cooldown\\ping4"
-
-local function MakeRingLayer(holder, sub)
-    local tex = holder:CreateTexture(nil, "ARTWORK", nil, sub)
-    tex:SetTexture(XP_RING_TEX)
-    tex:SetBlendMode("ADD")
-    local mask = holder:CreateMaskTexture()
-    mask:SetTexture("Interface\\Buttons\\WHITE8x8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    pcall(tex.AddMaskTexture, tex, mask)
-    return { tex = tex, mask = mask }
-end
-
--- Dégradé vertical (sombre en bas → vif en haut). Fallback couleur unie.
-local function ApplyGradient(tex, color, alpha)
-    local r, g, b = color[1], color[2], color[3]
-    local ok = pcall(function()
-        tex:SetGradient("VERTICAL",
-            CreateColor(r * 0.45, g * 0.45, b * 0.45, alpha),
-            CreateColor(math.min(1, r * 1.25), math.min(1, g * 1.25), math.min(1, b * 1.25), alpha))
-    end)
-    if not ok then
-        tex:SetVertexColor(r, g, b, 1)
-        tex:SetAlpha(alpha)
-    end
-end
+-- v4 : progression ANGULAIRE "aiguille de montre" — départ 12h, sens horaire,
+-- rendu par 64 segments rectangulaires fins ROTATÉS quasi-continus (technique
+-- V8 du castbar circulaire, prouvée en jeu). Net, solide, zéro flou : piste
+-- sombre fine en révolution complète + arc coloré qui avance comme une montre.
+local SEG_COUNT = 64
+local WHITE_TEX = "Interface\\Buttons\\WHITE8x8"
 
 function X:EnsureRing()
     local data = self:GetMoiData()
@@ -162,15 +140,19 @@ function X:EnsureRing()
     holder:SetFrameLevel((data.root:GetFrameLevel() or 1) + 31)
     holder:SetPoint("CENTER", data.orbFrame, "CENTER")
 
-    -- Piste : cercle fin discret (la révolution complète, portion non gagnée)
-    local track = holder:CreateTexture(nil, "ARTWORK", nil, 2)
-    track:SetTexture(XP_RING_TEX)
-    track:SetBlendMode("ADD")
-    track:SetVertexColor(0.30, 0.28, 0.38, 1)
-    track:SetAlpha(0.22)
-
-    local rested = MakeRingLayer(holder, 3)   -- avance rested, sous le fill
-    local fill   = MakeRingLayer(holder, 4)   -- progression principale
+    local segs = {}
+    for i = 1, SEG_COUNT do
+        -- Piste : trait sombre fin, révolution complète toujours visible
+        local track = holder:CreateTexture(nil, "ARTWORK", nil, 2)
+        track:SetTexture(WHITE_TEX)
+        track:SetVertexColor(0.03, 0.03, 0.045, 1)
+        track:SetAlpha(0.55)
+        -- Remplissage : couleur du mode (XP/rested/réputation)
+        local fill = holder:CreateTexture(nil, "ARTWORK", nil, 3)
+        fill:SetTexture(WHITE_TEX)
+        fill:SetAlpha(0)
+        segs[i] = { track = track, fill = fill }
+    end
 
     -- Flash de gain (AnimationGroup, pas d'OnUpdate)
     local flash = holder:CreateAnimationGroup()
@@ -189,9 +171,7 @@ function X:EnsureRing()
     self.ring = {
         _data = data,
         holder = holder,
-        track = track,
-        fill = fill,
-        rested = rested,
+        segs = segs,
         flash = flash,
         hotspot = hotspot,
     }
@@ -203,32 +183,56 @@ function X:Layout(ring)
     local data = ring._data
     local cfg = CFG()
     local orbSize = tonumber(data.orbSize) or tonumber(cfg.size) or 74
-    local size = orbSize * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
-    if ring._size == size then return end
-    ring._size = size
-    ring.holder:SetSize(size, size)
-    ring.track:ClearAllPoints()
-    ring.track:SetSize(size, size)
-    ring.track:SetPoint("CENTER", ring.holder, "CENTER")
-    for _, layer in ipairs({ring.fill, ring.rested}) do
-        layer.tex:ClearAllPoints()
-        layer.tex:SetSize(size, size)
-        layer.tex:SetPoint("CENTER", ring.holder, "CENTER")
-        layer.mask:ClearAllPoints()
-        layer.mask:SetSize(size * 1.1, size)
-        layer.mask:SetPoint("BOTTOM", ring.holder, "BOTTOM", 0, -size * 0.05)
+    local radius = orbSize * 0.5 * Clamp(cfg.moi_xp_ring_scale, 1.05, 1.60)
+    if ring._radius == radius then return end
+    ring._radius = radius
+    ring.holder:SetSize(radius * 2 + 8, radius * 2 + 8)
+
+    -- Géométrie V8 smooth : segments quasi-jointifs (95% du pas angulaire)
+    local segLen = math.max(3, (2 * math.pi * radius / SEG_COUNT) * 0.95)
+    local segThick = math.max(2.5, orbSize * 0.045)
+    for i, s in ipairs(ring.segs) do
+        -- Départ 12h, sens HORAIRE (aiguille de montre)
+        local angle = (math.pi * 0.5) - ((i - 0.5) / SEG_COUNT) * 2 * math.pi
+        local x = math.cos(angle) * radius
+        local y = math.sin(angle) * radius
+        local rotation = -(angle - math.pi * 0.5)
+        s.track:SetSize(segLen, segThick)
+        s.track:ClearAllPoints()
+        s.track:SetPoint("CENTER", ring.holder, "CENTER", x, y)
+        s.track:SetRotation(rotation)
+        s.fill:SetSize(segLen, segThick)
+        s.fill:ClearAllPoints()
+        s.fill:SetPoint("CENTER", ring.holder, "CENTER", x, y)
+        s.fill:SetRotation(rotation)
     end
-    ring.hotspot:SetSize(size * 0.7, math.max(14, size * 0.18))
+
+    ring.hotspot:SetSize(radius * 1.2, math.max(14, radius * 0.30))
     ring.hotspot:ClearAllPoints()
-    ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, size * 0.5)
+    ring.hotspot:SetPoint("CENTER", ring.holder, "CENTER", 0, radius)
 end
 
--- Remplissage bas → haut : hauteur du masque = ratio (léger débord bas -5%).
-local function SetRingFill(ring, layer, ratio)
-    ratio = Clamp(ratio, 0, 1)
-    local size = ring._size or 74
-    layer.mask:SetHeight(math.max(0.5, size * 1.05 * ratio))
-    layer.tex:SetShown(ratio > 0.004)
+-- Allume les segments en sens horaire : p = progression principale (couleur
+-- pleine), pLead = avance rested (translucide), reste = piste seule.
+local function PaintClock(ring, p, pLead, mainColor, leadColor, alpha)
+    local lit  = math.floor(Clamp(p, 0, 1) * SEG_COUNT + 0.5)
+    local lead = pLead and math.floor(Clamp(pLead, 0, 1) * SEG_COUNT + 0.5) or lit
+    for i, s in ipairs(ring.segs) do
+        if i <= lit then
+            -- Léger dégradé angulaire : sombre au départ → vif vers la tête
+            local k = 0.70 + 0.45 * (i / math.max(1, lit))
+            s.fill:SetVertexColor(
+                math.min(1, mainColor[1] * k),
+                math.min(1, mainColor[2] * k),
+                math.min(1, mainColor[3] * k), 1)
+            s.fill:SetAlpha(alpha)
+        elseif i <= lead and leadColor then
+            s.fill:SetVertexColor(leadColor[1], leadColor[2], leadColor[3], 1)
+            s.fill:SetAlpha(alpha * 0.40)
+        else
+            s.fill:SetAlpha(0)
+        end
+    end
 end
 
 -- ── Update principal ────────────────────────────────────────────────────────
@@ -253,21 +257,12 @@ function X:Update()
     if mode == "xp" then
         local p, pRested = self:GetXP()
         if not p then ring.holder:Hide() return end
-        SetRingFill(ring, ring.fill, p)
-        ApplyGradient(ring.fill.tex, COLOR_XP, alpha)
-        if pRested and pRested > p + 0.002 then
-            SetRingFill(ring, ring.rested, pRested)
-            ApplyGradient(ring.rested.tex, COLOR_RESTED, alpha * 0.40)
-        else
-            ring.rested.tex:Hide()
-        end
+        PaintClock(ring, p, pRested, COLOR_XP, COLOR_RESTED, alpha)
         ring._mode = "xp"
     else
         local p, name = self:GetReputation()
         if not p then ring.holder:Hide() return end
-        SetRingFill(ring, ring.fill, p)
-        ApplyGradient(ring.fill.tex, COLOR_REP, alpha)
-        ring.rested.tex:Hide()
+        PaintClock(ring, p, nil, COLOR_REP, nil, alpha)
         ring._mode = "reputation"
         ring._repName = name
     end

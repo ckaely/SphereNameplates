@@ -2496,6 +2496,207 @@ function SP.UIPlumber:BuildQuick()
     copy:SetPoint("TOP", source, "BOTTOM", 0, -18)
 end
 
+-- ── Tableau récapitulatif des barres d'action ──────────────────────────────
+-- Une ligne par barre, cellules compactes (cases + steppers ± + cycles).
+-- onChange(structural) : structural=true → rebuild complet (BuildSettings),
+-- sinon refresh léger du jeu uniquement.
+local GRID_VIS = {
+    {value="always",label="Toujours"},{value="combat",label="Combat"},
+    {value="nocombat",label="Hors cbt"},{value="target",label="Cible"},
+    {value="combat_target",label="Cbt+cible"},{value="mouseover",label="Survol"},
+    {value="combatfade",label="Fondu HC"},{value="hidden",label="Cachée"},
+}
+local GRID_PAGING_MAIN  = {{value="native",label="Native"},{value="none",label="Aucune"}}
+local GRID_PAGING_OTHER = {{value="none",label="Aucune"},{value="linked",label="Liée"}}
+
+local GRID_COLS = {
+    {key="name",     x=6,   w=44,  label="Barre"},
+    {key="enabled",  x=52,  w=34,  label="Act."},
+    {key="buttons",  x=88,  w=58,  label="Bout."},
+    {key="size",     x=148, w=58,  label="Taille"},
+    {key="columns",  x=208, w=54,  label="Col."},
+    {key="paging",   x=264, w=110, label="Pagination"},
+    {key="pageOffset", x=376, w=50, label="Décal."},
+    {key="visibility", x=428, w=108, label="Visibilité"},
+    {key="skin",     x=538, w=34,  label="Skin"},
+    {key="detail",   x=574, w=40,  label=""},
+}
+local GRID_WIDTH = 624
+
+local function GridColX(key)
+    for _, col in ipairs(GRID_COLS) do
+        if col.key == key then return col.x, col.w end
+    end
+    return 0, 40
+end
+
+function SP.UIPlumber:RenderBarsGrid(parent, root, refreshAB)
+    local rowH = 27
+    local nbars = 8
+    local grid = CreateFrame("Frame", nil, parent)
+    grid:SetSize(GRID_WIDTH, 24 + nbars * rowH + 6)
+
+    -- En-tête
+    for _, col in ipairs(GRID_COLS) do
+        if col.label ~= "" then
+            local h = Text(grid, col.label, 10, BRONZE or MUTED)
+            h:SetPoint("TOPLEFT", grid, "TOPLEFT", col.x, -4)
+            h:SetJustifyH("LEFT")
+        end
+    end
+    local sep = grid:CreateTexture(nil, "ARTWORK")
+    sep:SetHeight(1)
+    sep:SetPoint("TOPLEFT", grid, "TOPLEFT", 4, -20)
+    sep:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -4, -20)
+    sep:SetColorTexture(0.85, 0.50, 0.18, 0.35)
+
+    local selected = tonumber(root.selected) or 1
+
+    -- ── Cellules compactes ──────────────────────────────────────────────────
+    local function miniCheck(row, key, getv, setv, onChange)
+        local x, w = GridColX(key)
+        local b = CreateFrame("Button", nil, row)
+        b:SetSize(20, 20)
+        b:SetPoint("LEFT", row, "LEFT", x + (w - 20) * 0.5, 0)
+        b.box = b:CreateTexture(nil, "OVERLAY")
+        b.box:SetSize(26, 26)
+        b.box:SetPoint("CENTER")
+        SafeTexture(b.box, TEX)
+        local function paint()
+            if getv() then b.box:SetTexCoord(828/1024,892/1024,320/1024,384/1024)
+            else b.box:SetTexCoord(764/1024,828/1024,320/1024,384/1024) end
+        end
+        b:SetScript("OnClick", function()
+            setv(not getv()); paint()
+            if onChange then onChange(true) end
+        end)
+        paint()
+        return b
+    end
+
+    local function miniStepper(row, key, getv, setv, lo, hi, step, fmt)
+        local x, w = GridColX(key)
+        step = step or 1
+        local f = CreateFrame("Frame", nil, row)
+        f:SetSize(w, 22)
+        f:SetPoint("LEFT", row, "LEFT", x, 0)
+        local minus = CreateFrame("Button", nil, f)
+        minus:SetSize(16, 18); minus:SetPoint("LEFT", f, "LEFT", 0, 0)
+        local mbg = minus:CreateTexture(nil,"BACKGROUND"); mbg:SetAllPoints(); mbg:SetColorTexture(0.12,0.09,0.05,0.85)
+        local ml = Text(minus, "-", 13, GOLD); ml:SetPoint("CENTER", 0, 1)
+        local val = Text(f, "", 11, WHITE); val:SetPoint("CENTER", f, "CENTER", 0, 0); val:SetJustifyH("CENTER")
+        local plus = CreateFrame("Button", nil, f)
+        plus:SetSize(16, 18); plus:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+        local pbg = plus:CreateTexture(nil,"BACKGROUND"); pbg:SetAllPoints(); pbg:SetColorTexture(0.12,0.09,0.05,0.85)
+        local pl = Text(plus, "+", 13, GOLD); pl:SetPoint("CENTER", 0, 1)
+        local function paint()
+            local v = tonumber(getv()) or lo
+            val:SetText(fmt and fmt(v) or tostring(v))
+        end
+        minus:SetScript("OnClick", function()
+            local v = (tonumber(getv()) or lo) - step
+            if v < lo then v = lo end
+            setv(v); paint(); refreshAB()
+        end)
+        plus:SetScript("OnClick", function()
+            local v = (tonumber(getv()) or lo) + step
+            if v > hi then v = hi end
+            setv(v); paint(); refreshAB()
+        end)
+        paint()
+        f._paint = paint
+        return f
+    end
+
+    local function miniCycle(row, key, opts, getv, setv, onChange)
+        local x, w = GridColX(key)
+        local b = CreateFrame("Button", nil, row)
+        b:SetSize(w, 22)
+        b:SetPoint("LEFT", row, "LEFT", x, 0)
+        local bg = b:CreateTexture(nil,"BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.10,0.07,0.04,0.85)
+        local lbl = Text(b, "", 11, GOLD); lbl:SetPoint("CENTER")
+        local function curIndex()
+            local cur = getv()
+            for i, o in ipairs(opts) do if o.value == cur then return i end end
+            return 1
+        end
+        local function paint() lbl:SetText(opts[curIndex()].label) end
+        local function step(dir)
+            local i = curIndex() + dir
+            if i < 1 then i = #opts elseif i > #opts then i = 1 end
+            setv(opts[i].value)
+            if onChange then onChange(true) end
+        end
+        b:RegisterForClicks("LeftButtonUp","RightButtonUp")
+        b:SetScript("OnClick", function(_, mb) step(mb == "RightButton" and -1 or 1) end)
+        b:SetScript("OnEnter", function() bg:SetColorTexture(0.18,0.12,0.06,0.9) end)
+        b:SetScript("OnLeave", function() bg:SetColorTexture(0.10,0.07,0.04,0.85) end)
+        paint()
+        return b
+    end
+
+    local function onStructural()
+        if refreshAB then refreshAB() end
+        self:BuildSettings()
+    end
+
+    for i = 1, nbars do
+        local cfg = root.bars[i] or {}
+        local row = CreateFrame("Button", nil, grid)
+        row:SetSize(GRID_WIDTH, rowH - 2)
+        row:SetPoint("TOPLEFT", grid, "TOPLEFT", 0, -24 - (i - 1) * rowH)
+        local rbg = row:CreateTexture(nil, "BACKGROUND")
+        rbg:SetAllPoints()
+        rbg:SetColorTexture(0.95, 0.62, 0.22, (i == selected) and 0.10 or 0)
+
+        local nx = GridColX("name")
+        local nm = Text(row, "Barre " .. i, 11, (i == selected) and WHITE or GOLD)
+        nm:SetPoint("LEFT", row, "LEFT", nx, 0)
+
+        local function gb(k, d) return function() if cfg[k] ~= nil then return cfg[k] end return d end end
+        local function sb(k) return function(v) cfg[k] = v end end
+
+        miniCheck(row, "enabled", gb("enabled", i == 1), sb("enabled"), onStructural)
+        miniStepper(row, "buttons", gb("buttons", 12), sb("buttons"), 1, 12, 1)
+        miniStepper(row, "size", gb("size", 36), sb("size"), 20, 72, 2)
+        miniStepper(row, "columns", gb("columns", 12), sb("columns"), 1, 12, 1)
+
+        local pagingOpts = (i == 1) and GRID_PAGING_MAIN or GRID_PAGING_OTHER
+        miniCycle(row, "paging", pagingOpts,
+            function() return cfg.paging or (i == 1 and "native" or "none") end,
+            function(v) cfg.paging = v end, onStructural)
+
+        -- Décalage uniquement pour les barres « Liée »
+        if cfg.paging == "linked" then
+            miniStepper(row, "pageOffset", gb("pageOffset", 0), sb("pageOffset"), -10, 10, 1)
+        else
+            local dx = GridColX("pageOffset")
+            local dash = Text(row, "—", 11, MUTED); dash:SetPoint("LEFT", row, "LEFT", dx + 18, 0)
+        end
+
+        miniCycle(row, "visibility", GRID_VIS, gb("visibility", "always"), sb("visibility"), onStructural)
+
+        miniCheck(row, "skin",
+            function() return cfg.buttonSkin == "shadowcircle" end,
+            function(on) cfg.buttonSkin = on and "shadowcircle" or "none" end, onStructural)
+
+        -- Bouton détail (⋯) : sélectionne la barre pour les options avancées
+        local dx, dw = GridColX("detail")
+        local det = CreateFrame("Button", nil, row)
+        det:SetSize(dw - 8, 20)
+        det:SetPoint("LEFT", row, "LEFT", dx, 0)
+        local dbg = det:CreateTexture(nil,"BACKGROUND"); dbg:SetAllPoints(); dbg:SetColorTexture(0.12,0.09,0.05,0.85)
+        local dl = Text(det, "•••", 12, GOLD); dl:SetPoint("CENTER")
+        det:SetScript("OnClick", function()
+            root.selected = i
+            refreshAB()
+            self:BuildSettings()
+        end)
+    end
+
+    return grid
+end
+
 function SP.UIPlumber:BuildSettings()
     local win = self.win
     if not win then return end
@@ -4254,11 +4455,17 @@ function SP.UIPlumber:BuildSettings()
                 add(CreateCheck(c, "Indicateur de barre au changement", getRoot("pageFlash", true), setRoot("pageFlash")), 34, 28)
                 add(CreateCheck(c, "Raccourcis vers boutons SphereUI", getRoot("ownBindings", true), setRoot("ownBindings")), 34, 28)
                 add(CreateCheck(c, "Declenchement au press (anti-latence)", getRoot("castOnDown", true), setRoot("castOnDown")), 34, 28)
-                add(CreateCycle(c, "Barre a configurer", barOptions, function() return selected end, function(v)
-                    root.selected = v
-                    self:BuildSettings()
-                end), 34, 32)
             end, 1)
+
+            -- Tableau récapitulatif (toutes les barres, pleine largeur).
+            section("Tableau des barres", "actionbarsGrid", function()
+                local grid = self:RenderBarsGrid(c, root, refreshAB)
+                add(grid, 0, (grid:GetHeight() or 250) + 8, 1)
+                local hint = Text(c, "Clic sur Pagination / Visibilité = option suivante (clic droit = précédente). « ••• » ouvre le détail d'une barre ci-dessous.", 11, MUTED)
+                hint:SetWidth(GRID_WIDTH - 10); hint:SetJustifyH("LEFT")
+                add(hint, 0, 30, 1)
+            end, 1)
+            colY[2] = colY[1]   -- aligner la colonne 2 sous la grille (anti-chevauchement)
 
             section("Barre " .. selected .. " - Base", "actionbarBase" .. selected, function()
                 add(CreateCheck(c, "Activer cette barre", getBar("enabled", selected == 1), setBar("enabled")), 34, 28)
@@ -4994,6 +5201,18 @@ end
 
 function SP.UIPlumber:Close()
     if self.win then self.win:Hide() end
+end
+
+-- Ouvre la config directement sur le tableau des barres (UnitFrames > Moi >
+-- Barres d'actions). Appelé depuis le HUD du mode édition.
+function SP.UIPlumber:OpenToBarsTable()
+    self:Open()
+    self.family = "unitframes"
+    self.category = "moi"
+    self.unitKind = self.unitKind or {}
+    self.unitKind.moi = "self"
+    self.page = "actionbars"
+    pcall(self.RefreshAll, self)
 end
 
 local oldOpen = SP.UI.Open

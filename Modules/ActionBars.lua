@@ -81,6 +81,12 @@ local function BarDefaults(index)
         firstSlot = 1 + ((index - 1) * 12),
         followPaging = index == 1,
         orientation = "horizontal", -- horizontal | vertical | grid
+        -- Pagination de la barre :
+        --   "none"   : slots fixes (firstSlot)
+        --   "native" : suit la page native (touche « barre suivante ») + postures
+        --   "table"  : map page native 1-6 → page affichée (pagination liée)
+        paging = index == 1 and "native" or "none",
+        pageMap = {}, -- [pageNative]=pageAffichee, utilisé en mode "table"
         columns = 12,
         size = 36,
         spacing = 4,
@@ -153,6 +159,8 @@ function M:EnsureDefaults()
         primaryPairYOffset = 0,
         pageFlash = true,        -- indicateur éphémère "Barre N" au changement de page
         pageFlashDuration = 1.4, -- secondes avant le fondu
+        ownBindings = true,      -- router les raccourcis vers NOS boutons secure
+        castOnDown = true,       -- déclencher au press (réactivité max, anti-latence)
     })
     if root.replaceBlizzard == nil then root.replaceBlizzard = true end
     if root.hideBlizzard == nil then root.hideBlizzard = true end
@@ -191,6 +199,18 @@ function M:EnsureDefaults()
             end
         end
         root.emptyAlphaDefaultVersion = 2
+    end
+    -- Migration followPaging → paging (champ unifié, pagination par table possible)
+    if root.pagingFieldVersion ~= 1 then
+        for i = 1, NUM_BARS do
+            local cfg = root.bars[i]
+            if cfg and cfg.paging == nil then
+                cfg.paging = (cfg.followPaging == true) and "native"
+                    or (i == 1 and "native" or "none")
+            end
+            if cfg and type(cfg.pageMap) ~= "table" then cfg.pageMap = {} end
+        end
+        root.pagingFieldVersion = 1
     end
     return root
 end
@@ -305,8 +325,61 @@ local function CurrentFormName()
     return nil
 end
 
+-- Page native pure (curseur « barre suivante », 1-6), sans bonusbar.
+local function ResolveNativePage()
+    return NativeActionBarPage()
+end
+
+-- Mode de pagination d'une barre (compat ascendante avec followPaging).
+local function BarPagingMode(cfg, barIndex)
+    if not cfg then return "none" end
+    if cfg.paging then return cfg.paging end
+    if cfg.followPaging == true then return "native" end
+    return (tonumber(barIndex) == 1) and "native" or "none"
+end
+
 local function FollowsNativePaging(cfg, barIndex)
-    return tonumber(barIndex) == 1 and cfg and cfg.followPaging == true
+    return BarPagingMode(cfg, barIndex) ~= "none"
+end
+
+-- Page AFFICHÉE par une barre, identique côté visuel et côté secure :
+--   native : page principale canonique (bonusbar 1-4 → 7-10, bar 2-6 → 2-6)
+--   table  : map page native 1-6 → page choisie (pagination LIÉE multi-barres)
+--   none   : nil (slots fixes via firstSlot)
+local function ResolveBarDisplayPage(cfg, barIndex)
+    local mode = BarPagingMode(cfg, barIndex)
+    if mode == "native" then
+        return ResolveMainBarPage()
+    elseif mode == "table" then
+        local np = ResolveNativePage()
+        local map = cfg.pageMap
+        local target = map and tonumber(map[np])
+        if target then return Clamp(target, 1, 11) end
+        local base = map and tonumber(map[1])
+        return Clamp(base or np, 1, 11)
+    end
+    return nil
+end
+
+-- Chaîne du state-driver « page » d'une barre (mêmes conditions que le visuel).
+local function BarPageDriver(cfg, barIndex)
+    local mode = BarPagingMode(cfg, barIndex)
+    if mode == "native" then
+        return NativePageDriver()
+    elseif mode == "table" then
+        local map = cfg.pageMap or {}
+        local clauses = {}
+        for np = 2, 6 do
+            local target = tonumber(map[np])
+            if target then
+                clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, Clamp(target, 1, 11))
+            end
+        end
+        local base = tonumber(map[1]) or 1
+        clauses[#clauses + 1] = tostring(Clamp(base, 1, 11))
+        return table.concat(clauses, "; ")
+    end
+    return nil
 end
 
 local function IsSpecialBarIndex(barIndex)
@@ -340,18 +413,34 @@ local function ResolveButtonSlot(cfg, buttonIndex, barIndex)
     if IsSpecialBarIndex(barIndex) then
         return SPECIAL_SLOT_START + buttonIndex - 1
     end
-    if FollowsNativePaging(cfg, barIndex) then
-        return ((EffectiveNativeActionBarPage() - 1) * 12) + buttonIndex
+    local page = ResolveBarDisplayPage(cfg, barIndex)
+    if page then
+        return ((page - 1) * 12) + buttonIndex
     end
     return Clamp((tonumber(cfg.firstSlot) or 1) + buttonIndex - 1, 1, 180)
 end
+
+-- Famille de commandes de binding native par barre SphereUI. Quand on prend
+-- possession des raccourcis, chaque barre « emprunte » les touches assignées à
+-- sa famille Blizzard correspondante (bar 1 = ACTIONBUTTON, bar 2 = MultiBar1…).
+local BAR_BINDING_FAMILY = {
+    [1] = "ACTIONBUTTON",
+    [2] = "MULTIACTIONBAR1BUTTON",
+    [3] = "MULTIACTIONBAR2BUTTON",
+    [4] = "MULTIACTIONBAR3BUTTON",
+    [5] = "MULTIACTIONBAR4BUTTON",
+    [6] = "MULTIACTIONBAR5BUTTON",
+    [7] = "MULTIACTIONBAR6BUTTON",
+    [8] = "MULTIACTIONBAR7BUTTON",
+}
 
 local function ButtonBindingName(cfg, buttonIndex, slot, barIndex)
     if IsSpecialBarIndex(barIndex) then
         return "ACTIONBUTTON" .. tostring(Clamp(buttonIndex, 1, 12))
     end
-    if FollowsNativePaging(cfg, barIndex) then
-        return "ACTIONBUTTON" .. tostring(Clamp(buttonIndex, 1, 12))
+    local family = BAR_BINDING_FAMILY[tonumber(barIndex) or 0]
+    if family then
+        return family .. tostring(Clamp(buttonIndex, 1, 12))
     end
     return ActionBindingName(slot)
 end
@@ -415,12 +504,19 @@ end
 -- deux (double déclenchement = canalisations annulées).
 local function ApplyClickRegistration(btn, cfg)
     if not btn then return end
-    local down = cfg and cfg.clickOnDown == true
+    -- Anti-latence : si l'option globale castOnDown est active (défaut), nos
+    -- boutons déclenchent au PRESS quelle que soit la CVar Blizzard. Sinon on
+    -- suit la CVar ActionButtonUseKeyDown / le réglage par barre clickOnDown.
+    local root = DB().actionbars
+    local down = (type(root) == "table" and root.castOnDown ~= false)
     if not down then
-        local ok, useKeyDown = pcall(function()
-            return GetCVarBool and GetCVarBool("ActionButtonUseKeyDown") or false
-        end)
-        down = ok and useKeyDown == true
+        down = cfg and cfg.clickOnDown == true
+        if not down then
+            local ok, useKeyDown = pcall(function()
+                return GetCVarBool and GetCVarBool("ActionButtonUseKeyDown") or false
+            end)
+            down = ok and useKeyDown == true
+        end
     end
     btn:RegisterForClicks(down and "AnyDown" or "AnyUp")
 end
@@ -1900,12 +1996,11 @@ function M:ApplyLayout(index)
     local root = self:EnsureDefaults()
     local cfg = root.bars[index]
     local bar = self:EnsureBar(index)
-    if index ~= 1 and cfg.followPaging == true then
-        cfg.followPaging = false
-    end
+    -- N'importe quelle barre peut désormais paginer (plus de force-off bar≠1).
     if not (root.enabled and cfg.enabled) then
         if UnregisterStateDriver then pcall(UnregisterStateDriver, bar, "visibility") end
         if UnregisterStateDriver then pcall(UnregisterStateDriver, bar, "page") end
+        if ClearOverrideBindings then pcall(ClearOverrideBindings, bar) end
         bar:Hide()
         return
     end
@@ -1955,15 +2050,60 @@ function M:ApplyLayout(index)
         if btn._nativeButtonIndex then self:MapNativeButton(btn, btn._nativeButtonIndex) end
         self:UpdateButton(btn)
     end
-    if FollowsNativePaging(cfg, index) then
-        if RegisterStateDriver then
-            pcall(RegisterStateDriver, bar, "page", NativePageDriver())
-        end
+    local driver = BarPageDriver(cfg, index)
+    if driver and RegisterStateDriver then
+        pcall(RegisterStateDriver, bar, "page", driver)
     elseif UnregisterStateDriver then
         pcall(UnregisterStateDriver, bar, "page")
     end
+    self:ApplyBarBindings(bar, cfg, index)
     self:ApplyVisibility(bar, cfg)
     self:ApplyEditMode(bar, cfg)
+end
+
+-- Prend possession des raccourcis : route les touches assignées à la famille
+-- Blizzard de la barre vers NOS boutons secure (clic au press → zéro latence,
+-- et la touche caste le slot RÉELLEMENT affiché, pagination liée comprise).
+-- Hors combat uniquement (SetOverrideBindingClick est protégé).
+function M:ApplyBarBindings(bar, cfg, index)
+    if not bar then return end
+    if InCombat() then self._pendingRebuild = true return end
+    if ClearOverrideBindings then pcall(ClearOverrideBindings, bar) end
+    local root = self:EnsureDefaults()
+    if root.ownBindings == false then return end
+    if not (root.enabled and cfg and cfg.enabled) then return end
+    if IsSpecialBarIndex(index) then return end
+    local family = BAR_BINDING_FAMILY[tonumber(index) or 0]
+    if not family or not (GetBindingKey and SetOverrideBindingClick) then return end
+    -- Politesse véhicule/monture : la barre 1 utilise la famille ACTIONBUTTON,
+    -- comme la barre véhicule/override Blizzard. Pendant un état spécial, on
+    -- LAISSE les touches natives à la barre véhicule (on a déjà clear nos
+    -- overrides ci-dessus) ; on les reprend en sortie d'état (event handler).
+    if tonumber(index) == 1 and IsSpecialActionState() then return end
+    local count = Clamp(cfg.buttons, 1, MAX_BUTTONS)
+    for i = 1, count do
+        local btn = bar.buttons[i]
+        local name = btn and btn:GetName()
+        if name then
+            local keys = { GetBindingKey(family .. i) }
+            for _, key in ipairs(keys) do
+                if key and key ~= "" then
+                    pcall(SetOverrideBindingClick, bar, true, key, name, "LeftButton")
+                end
+            end
+        end
+    end
+end
+
+-- Réapplique la possession des raccourcis sur toutes les barres (UPDATE_BINDINGS).
+function M:ApplyAllBindings()
+    if InCombat() then self._pendingRebuild = true return end
+    if not self.bars then return end
+    for index, bar in pairs(self.bars) do
+        if not IsSpecialBarIndex(index) then
+            self:ApplyBarBindings(bar, self:GetBarConfig(index), index)
+        end
+    end
 end
 
 function M:MapButtonSlot(btn, slot)
@@ -2405,8 +2545,19 @@ end
 -- Détecte un changement de page de la barre principale et flashe le nom.
 -- silent=true : pose la référence sans flasher (init/reload).
 function M:CheckPageChange(silent)
-    local cfg1 = self:GetBarConfig(1)
-    if not (self:IsEnabled() and cfg1 and cfg1.enabled == true and cfg1.followPaging == true) then
+    -- Flash si l'addon est actif et qu'au moins une barre activée pagine.
+    local paginates = false
+    if self:IsEnabled() then
+        local root = self:EnsureDefaults()
+        for i = 1, NUM_BARS do
+            local c = root.bars[i]
+            if c and c.enabled == true and BarPagingMode(c, i) ~= "none" then
+                paginates = true
+                break
+            end
+        end
+    end
+    if not paginates then
         self._lastShownPage = nil
         return
     end
@@ -2478,7 +2629,13 @@ function M:EnsureEventFrame()
                 M:ApplyBlizzardBars()
             end
             M:UpdateAllButtons()
+            M:ApplyAllBindings()      -- réapplique les raccourcis différés en combat
             M:CheckPageChange(true)   -- resync silencieux après combat
+            return
+        end
+        if event == "UPDATE_BINDINGS" then
+            M:UpdateAllButtons()
+            M:ApplyAllBindings()
             return
         end
         if event == "PLAYER_ENTERING_WORLD" then
@@ -2492,6 +2649,14 @@ function M:EnsureEventFrame()
             or event == "UPDATE_BONUS_ACTIONBAR"
             or event == "UPDATE_SHAPESHIFT_FORM" then
             M:CheckPageChange()
+        end
+        -- Entrée/sortie d'état spécial : la barre 1 doit rendre/reprendre ses
+        -- touches ACTIONBUTTON pour la barre véhicule/monture.
+        if event == "UPDATE_VEHICLE_ACTIONBAR"
+            or event == "UPDATE_OVERRIDE_ACTIONBAR"
+            or event == "UPDATE_POSSESS_BAR"
+            or event == "UPDATE_BONUS_ACTIONBAR" then
+            M:ApplyAllBindings()
         end
     end)
 end

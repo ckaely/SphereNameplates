@@ -4252,6 +4252,8 @@ function SP.UIPlumber:BuildSettings()
                 end), 34, 28)
                 add(CreateCheck(c, "Verrouiller les boutons", getRoot("lock", true), setRoot("lock")), 34, 28)
                 add(CreateCheck(c, "Indicateur de barre au changement", getRoot("pageFlash", true), setRoot("pageFlash")), 34, 28)
+                add(CreateCheck(c, "Raccourcis vers boutons SphereUI", getRoot("ownBindings", true), setRoot("ownBindings")), 34, 28)
+                add(CreateCheck(c, "Declenchement au press (anti-latence)", getRoot("castOnDown", true), setRoot("castOnDown")), 34, 28)
                 add(CreateCycle(c, "Barre a configurer", barOptions, function() return selected end, function(v)
                     root.selected = v
                     self:BuildSettings()
@@ -4261,16 +4263,40 @@ function SP.UIPlumber:BuildSettings()
             section("Barre " .. selected .. " - Base", "actionbarBase" .. selected, function()
                 add(CreateCheck(c, "Activer cette barre", getBar("enabled", selected == 1), setBar("enabled")), 34, 28)
                 add(CreateSlider(c, "Nombre de boutons", 1, 12, 1, getBar("buttons", 12), setBar("buttons")), 34, 48)
-                if selected == 1 then
-                    add(CreateCheck(c, "Suivre page native WoW", getBar("followPaging", true), setBar("followPaging")), 34, 28)
-                elseif cfgBar.followPaging == true then
-                    cfgBar.followPaging = false
-                end
-                if selected ~= 1 or not getBar("followPaging", selected == 1)() then
-                    add(CreateSlider(c, "Premier slot action", 1, 180, 1, getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
-                end
                 add(CreateCheck(c, "Clic au press", getBar("clickOnDown", false), setBar("clickOnDown")), 34, 28)
             end, 2)
+
+            section("Pagination", "actionbarPaging" .. selected, function()
+                local function pmode()
+                    return cfgBar.paging or (selected == 1 and "native" or "none")
+                end
+                add(CreateCycle(c, "Pagination", {
+                    {value="none",   label="Aucune (slots fixes)"},
+                    {value="native", label="Page native (touche barre suivante)"},
+                    {value="table",  label="Liee (table par page)"},
+                }, pmode, function(v)
+                    cfgBar.paging = v
+                    refreshAB()
+                    self:BuildSettings()
+                end), 34, 32)
+
+                local mode = pmode()
+                if mode == "none" then
+                    add(CreateSlider(c, "Premier slot action", 1, 180, 1,
+                        getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
+                elseif mode == "table" then
+                    if type(cfgBar.pageMap) ~= "table" then cfgBar.pageMap = {} end
+                    local hint = Text(c, "Quand tu changes de page (touche barre suivante), chaque page native pointe vers la page affichee choisie. Ex : page native 2 -> page 7 = la barre montre les sorts 73-84.", 11, MUTED)
+                    hint:SetWidth(COLUMN_WIDTH - 54)
+                    hint:SetJustifyH("LEFT")
+                    add(hint, 34, 52)
+                    local function getMap(n) return function() return tonumber(cfgBar.pageMap[n]) or n end end
+                    local function setMap(n) return function(v) cfgBar.pageMap[n] = tonumber(v); refreshAB() end end
+                    for n = 1, 6 do
+                        add(CreateSlider(c, "Page native " .. n .. " -> affiche", 1, 11, 1, getMap(n), setMap(n)), 34, 48)
+                    end
+                end
+            end, 1)
 
             section("Layout", "actionbarLayout" .. selected, function()
                 add(CreateCycle(c, "Orientation", {

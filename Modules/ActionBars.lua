@@ -25,6 +25,7 @@ local ACTION_BUTTON_MASK = "Interface\\AddOns\\SphereNameplates\\media\\actionbu
 local SHADOW_CIRCLE_TEX = "Interface\\AddOns\\SphereNameplates\\media\\shadowcircle"
 local MIN_SKIN_COOLDOWN = 1.50
 local SHADOW_CIRCLE_BAR_SCALE = 3.00
+local COOLDOWN_ARC_SEGMENTS = 36
 
 local function DB()
     return SP.db or {}
@@ -150,6 +151,8 @@ function M:EnsureDefaults()
         primaryPairAnchor = true,
         primaryPairGap = DEFAULT_PRIMARY_PAIR_GAP,
         primaryPairYOffset = 0,
+        pageFlash = true,        -- indicateur éphémère "Barre N" au changement de page
+        pageFlashDuration = 1.4, -- secondes avant le fondu
     })
     if root.replaceBlizzard == nil then root.replaceBlizzard = true end
     if root.hideBlizzard == nil then root.hideBlizzard = true end
@@ -255,23 +258,51 @@ local function StaticBarOwnsNativePage(page)
     return false
 end
 
-local function EffectiveNativeActionBarPage()
-    local page = NativeActionBarPage()
-    if StaticBarOwnsNativePage(page) then
-        return 1
+-- Résolution CANONIQUE de la page de la barre principale (bar 1).
+-- Utilisée à la fois par le state-driver secure ET par le rendu visuel, pour
+-- qu'ils ne divergent JAMAIS (cause du bug "icône page 1 alors qu'on caste
+-- une autre page"). Couvre :
+--   • bonusbar 1-4 → pages 7-10  (postures guerrier, formes druide, etc.)
+--   • bar 2-6      → pages 2-6    (touche "barre d'action suivante")
+--   • défaut       → page 1
+-- bonusbar:5 + vehicle/override/possess sont gérés par la barre spéciale
+-- (bar 1 masquée dans ces états), donc absents ici volontairement.
+local function ResolveMainBarPage()
+    local bonus = 0
+    if GetBonusBarOffset then
+        local ok, v = pcall(GetBonusBarOffset)
+        if ok then bonus = tonumber(v) or 0 end
     end
-    return page
+    if bonus >= 1 and bonus <= 4 then
+        return 6 + bonus
+    end
+    return NativeActionBarPage()
+end
+
+-- Conservé comme alias pour compat ; ne neutralise plus la page (l'ancien
+-- StaticBarOwnsNativePage cassait l'affichage au-delà de la page 2).
+local function EffectiveNativeActionBarPage()
+    return ResolveMainBarPage()
 end
 
 local function NativePageDriver()
-    local clauses = {}
-    for page = 2, 6 do
-        if not StaticBarOwnsNativePage(page) then
-            clauses[#clauses + 1] = ("[bar:%d] %d"):format(page, page)
-        end
+    return "[bonusbar:1] 7; [bonusbar:2] 8; [bonusbar:3] 9; [bonusbar:4] 10; "
+        .. "[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; 1"
+end
+
+-- Nom de la posture/forme active (pages 7-10), pour l'indicateur de barre.
+-- Tout en pcall : API de forme variable selon classe/version.
+local function CurrentFormName()
+    if not (GetShapeshiftForm and GetShapeshiftFormInfo) then return nil end
+    local okIdx, idx = pcall(GetShapeshiftForm)
+    if not okIdx or not idx or idx < 1 then return nil end
+    local okInfo, _, _, _, spellID = pcall(GetShapeshiftFormInfo, idx)
+    if not okInfo then return nil end
+    if spellID and C_Spell and C_Spell.GetSpellInfo then
+        local okName, info = pcall(C_Spell.GetSpellInfo, spellID)
+        if okName and type(info) == "table" and info.name then return info.name end
     end
-    clauses[#clauses + 1] = "1"
-    return table.concat(clauses, "; ")
+    return nil
 end
 
 local function FollowsNativePaging(cfg, barIndex)
@@ -715,6 +746,62 @@ local function EnsureButtonSkin(btn)
     btn.skinRing:SetVertexColor(1.0, 0.86, 0.58, 1)
     btn.skinRing:SetAlpha(0)
     btn.skinRing:Hide()
+
+    btn.cooldownArc = {}
+    for i = 1, COOLDOWN_ARC_SEGMENTS do
+        local seg = btn:CreateTexture(nil, "OVERLAY", nil, 7)
+        seg:SetTexture(WHITE)
+        seg:SetBlendMode("ADD")
+        seg:SetVertexColor(1.0, 0.88, 0.42, 1)
+        seg:SetAlpha(0)
+        seg:Hide()
+        btn.cooldownArc[i] = seg
+    end
+end
+
+local function LayoutCooldownArc(btn)
+    if not (btn and btn.cooldownArc) then return end
+    local size = btn:GetWidth() or 36
+    local radius = size * 0.485
+    local segLen = math.max(2.0, (2 * math.pi * radius / COOLDOWN_ARC_SEGMENTS) * 0.72)
+    local segThick = math.max(1.5, size * 0.055)
+    for i, seg in ipairs(btn.cooldownArc) do
+        local angle = (math.pi * 0.5) - ((i - 0.5) / COOLDOWN_ARC_SEGMENTS) * 2 * math.pi
+        local x = math.cos(angle) * radius
+        local y = math.sin(angle) * radius
+        seg:SetSize(segLen, segThick)
+        seg:ClearAllPoints()
+        seg:SetPoint("CENTER", btn, "CENTER", x, y)
+        seg:SetRotation(-(angle - math.pi * 0.5))
+    end
+end
+
+local function ClearCooldownArc(btn)
+    if not (btn and btn.cooldownArc) then return end
+    for _, seg in ipairs(btn.cooldownArc) do
+        seg:SetAlpha(0)
+        seg:Hide()
+    end
+end
+
+local function PaintCooldownArc(btn, remainingRatio, cfg)
+    if not (btn and btn.cooldownArc and SkinEnabled(cfg)) then
+        ClearCooldownArc(btn)
+        return
+    end
+    local lit = math.floor(Clamp(remainingRatio, 0, 1) * COOLDOWN_ARC_SEGMENTS + 0.5)
+    local baseAlpha = Clamp(cfg.skinAlpha, 0, 1)
+    for i, seg in ipairs(btn.cooldownArc) do
+        if i <= lit then
+            local k = 0.68 + 0.32 * (i / math.max(1, lit))
+            seg:SetVertexColor(1.0, 0.82 * k, 0.26 * k, 1)
+            seg:SetAlpha(baseAlpha)
+            seg:Show()
+        else
+            seg:SetAlpha(0)
+            seg:Hide()
+        end
+    end
 end
 
 local function ApplyButtonSkin(btn, cfg, hasAction)
@@ -734,9 +821,13 @@ local function ApplyButtonSkin(btn, cfg, hasAction)
     if btn.cooldownShadeMask then
         SetMaskedPoints(btn.cooldownShadeMask, btn.cooldownShade)
     end
+    LayoutCooldownArc(btn)
     if not enabled and btn.cooldownShade then
         btn.cooldownShade:SetAlpha(0)
         btn.cooldownShade:Hide()
+    end
+    if not enabled or hasAction ~= true then
+        ClearCooldownArc(btn)
     end
 end
 
@@ -756,6 +847,7 @@ function M:ClearCooldownSkin(btn)
     if btn.skinRing then
         btn.skinRing:SetRotation(0)
     end
+    ClearCooldownArc(btn)
 end
 
 local function FormatCooldownTime(seconds)
@@ -791,11 +883,17 @@ function M:UpdateCooldownSkin(btn)
         self:ClearCooldownSkin(btn)
         return
     end
-    -- cdText custom retiré : les chiffres NATIFS du Cooldown (moteur C)
-    -- affichent le temps restant, y compris quand les valeurs sont secrètes.
+    -- Valeurs lisibles : texte custom stable + ombre/rotation.
+    -- Valeurs secretes : RegisterCooldownSkin coupe cette branche.
     if btn.cdText then
-        btn.cdText:SetText("")
-        btn.cdText:Hide()
+        local txt = FormatCooldownTime(remaining)
+        if txt ~= "" then
+            btn.cdText:SetText(txt)
+            btn.cdText:Show()
+        else
+            btn.cdText:SetText("")
+            btn.cdText:Hide()
+        end
     end
     if btn.cooldownShade and SkinEnabled(cfg) and cfg.cooldownShade ~= false then
         btn.cooldownShade:SetVertexColor(0, 0, 0, Clamp(cfg.cooldownShadeAlpha, 0, 1) * remainingRatio)
@@ -812,6 +910,7 @@ function M:UpdateCooldownSkin(btn)
             btn.skinRing:SetRotation(0)
         end
     end
+    PaintCooldownArc(btn, remainingRatio, cfg)
 end
 
 function M:EnsureCooldownSkinTicker()
@@ -854,6 +953,7 @@ function M:RegisterCooldownSkin(btn, start, duration, enable)
     local plain = SP.IsPlainNumber
     if not (plain and plain(start) and plain(duration)) then
         self:ClearCooldownSkin(btn)
+        if btn.cooldown then pcall(btn.cooldown.SetHideCountdownNumbers, btn.cooldown, false) end
         return
     end
     local s, d = tonumber(start) or 0, tonumber(duration) or 0
@@ -870,6 +970,7 @@ function M:RegisterCooldownSkin(btn, start, duration, enable)
     end
     btn._skinCooldownStart = s
     btn._skinCooldownDuration = d
+    if btn.cooldown then pcall(btn.cooldown.SetHideCountdownNumbers, btn.cooldown, true) end
     self.cooldownSkinButtons = self.cooldownSkinButtons or {}
     self.cooldownSkinButtons[btn] = true
     self:EnsureCooldownSkinTicker()
@@ -937,7 +1038,7 @@ function M:CreateButton(bar, barIndex, buttonIndex)
     pcall(b.cooldown.SetDrawSwipe, b.cooldown, false)
     pcall(b.cooldown.SetDrawEdge, b.cooldown, false)
     pcall(b.cooldown.SetDrawBling, b.cooldown, false)
-    pcall(b.cooldown.SetHideCountdownNumbers, b.cooldown, false)
+    pcall(b.cooldown.SetHideCountdownNumbers, b.cooldown, true)
 
     b.cdText = b:CreateFontString(nil, "OVERLAY")
     b.cdText:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
@@ -2219,10 +2320,103 @@ function M:Refresh()
     self:ApplySpecialLayout()
     self:UpdateEditGrid()
     self:ApplyBlizzardBars()
+    self:CheckPageChange(true)   -- pose la référence de page sans flasher
     if IsEditMode() and self:IsEnabled() then
         self:ShowEditHud()
     elseif self.editMenu then
         self.editMenu:Hide()
+    end
+end
+
+-- ── Indicateur éphémère de page (« Barre N ») ───────────────────────────────
+function M:PageLabel(page)
+    page = tonumber(page) or 1
+    if page >= 7 then
+        local name = CurrentFormName()
+        if name and name ~= "" then return name end
+        return "Posture " .. (page - 6)
+    end
+    if page == 1 then return "Barre principale" end
+    return "Barre " .. page
+end
+
+function M:EnsurePageFlash()
+    if self.pageFlashFrame then return self.pageFlashFrame end
+    local f = CreateFrame("Frame", "SPActionBarPageFlash", UIParent, "BackdropTemplate")
+    f:SetSize(200, 38)
+    f:SetFrameStrata("HIGH")
+    f:SetFrameLevel(720)
+    f:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 12,
+        insets   = {left=3, right=3, top=3, bottom=3},
+    })
+    f:SetBackdropColor(0.03, 0.025, 0.02, 0.82)
+    f:SetBackdropBorderColor(0.55, 0.38, 0.14, 0.9)
+    f.text = f:CreateFontString(nil, "OVERLAY")
+    f.text:SetFont("Fonts\\FRIZQT__.TTF", 17, "OUTLINE")
+    f.text:SetPoint("CENTER")
+    f.text:SetTextColor(1.0, 0.84, 0.32, 1)
+
+    f.anim = f:CreateAnimationGroup()
+    f.holdAnim = f.anim:CreateAnimation("Alpha")
+    f.holdAnim:SetFromAlpha(1); f.holdAnim:SetToAlpha(1)
+    f.holdAnim:SetDuration(1.0); f.holdAnim:SetOrder(1)
+    local fade = f.anim:CreateAnimation("Alpha")
+    fade:SetFromAlpha(1); fade:SetToAlpha(0)
+    fade:SetDuration(0.45); fade:SetOrder(2); fade:SetSmoothing("OUT")
+    f.anim:SetScript("OnFinished", function() f:Hide() end)
+    f:Hide()
+    self.pageFlashFrame = f
+    return f
+end
+
+function M:AnchorPageFlash(f)
+    f:ClearAllPoints()
+    local moi = SP.Moi and ((SP.Moi.data and SP.Moi.data.root) or SP.Moi.anchor)
+    if moi then
+        f:SetPoint("BOTTOM", moi, "TOP", 0, 26)
+        return
+    end
+    local bar = self.bars and self.bars[1]
+    if bar then
+        f:SetPoint("BOTTOM", bar, "TOP", 0, 12)
+    else
+        f:SetPoint("CENTER", UIParent, "CENTER", 0, 140)
+    end
+end
+
+function M:FlashPage(label)
+    local root = self:EnsureDefaults()
+    if root.pageFlash == false then return end
+    local f = self:EnsurePageFlash()
+    self:AnchorPageFlash(f)
+    f.text:SetText(label or "")
+    f:SetWidth(math.max(140, (f.text:GetStringWidth() or 100) + 52))
+    local hold = Clamp(root.pageFlashDuration, 0.4, 5.0) - 0.45
+    f.holdAnim:SetDuration(math.max(0.1, hold))
+    pcall(f.anim.Stop, f.anim)
+    f:SetAlpha(1)
+    f:Show()
+    pcall(f.anim.Play, f.anim)
+end
+
+-- Détecte un changement de page de la barre principale et flashe le nom.
+-- silent=true : pose la référence sans flasher (init/reload).
+function M:CheckPageChange(silent)
+    local cfg1 = self:GetBarConfig(1)
+    if not (self:IsEnabled() and cfg1 and cfg1.enabled == true and cfg1.followPaging == true) then
+        self._lastShownPage = nil
+        return
+    end
+    local page = ResolveMainBarPage()
+    local prev = self._lastShownPage
+    if prev ~= page then
+        self._lastShownPage = page
+        if not silent and prev ~= nil then
+            self:FlashPage(self:PageLabel(page))
+        end
     end
 end
 
@@ -2284,6 +2478,7 @@ function M:EnsureEventFrame()
                 M:ApplyBlizzardBars()
             end
             M:UpdateAllButtons()
+            M:CheckPageChange(true)   -- resync silencieux après combat
             return
         end
         if event == "PLAYER_ENTERING_WORLD" then
@@ -2293,6 +2488,11 @@ function M:EnsureEventFrame()
         end
         M:UpdateAllButtons()
         M:ApplyBlizzardBars()
+        if event == "ACTIONBAR_PAGE_CHANGED"
+            or event == "UPDATE_BONUS_ACTIONBAR"
+            or event == "UPDATE_SHAPESHIFT_FORM" then
+            M:CheckPageChange()
+        end
     end)
 end
 

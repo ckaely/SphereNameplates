@@ -3317,13 +3317,26 @@ function SP.UIPlumber:BuildSettings()
                 {value="ring", label="Anneau icones"},
                 {value="segments", label="Segments circulaires"},
             }, get("auras_mode", "icons"), set("auras_mode")), 34, 32)
+            if get("auras_mode", "icons")() == "icons" then
+                add(CreateCycle(c, "Disposition Arc", {
+                    {value="pyramid", label="Pyramide compacte"},
+                    {value="classic", label="Arc classique"},
+                }, get("auras_arc_layout", "pyramid"), set("auras_arc_layout")), 34, 32)
+                if get("auras_arc_layout", "pyramid")() == "pyramid" then
+                    add(CreateCycle(c, "Forme pyramide", {
+                        {value="large28", label="7-6-5-4-3-2-1"},
+                        {value="compact15", label="5-4-3-2-1"},
+                    }, get("auras_pyramid_shape", "large28"), set("auras_pyramid_shape")), 34, 32)
+                    add(CreateSlider(c, "Compacite pyramide", 0.65, 1.35, 0.01, get("auras_pyramid_spacing", 1.02), set("auras_pyramid_spacing")), 34, 48)
+                end
+            end
             add(CreateCheck(c, "Priorite debuffs", get("auras_debuff_priority", true), set("auras_debuff_priority")), 34, 28)
             add(CreateCheck(c, "Controles / CC", get("auras_control", true), set("auras_control")), 34, 28)
         end, 1)
         section("Debuffs", "debuffs", function()
             add(CreateCheck(c, "Afficher debuffs", get("auras_debuff", true), set("auras_debuff")), 34, 28)
             add(CreateCheck(c, "Mes sorts uniquement", get("auras_debuff_mine_only", false), set("auras_debuff_mine_only")), 34, 28)
-            add(CreateSlider(c, "Max debuffs", 1, 12, 1, get("auras_maxDebuff", 5), set("auras_maxDebuff")), 34, 48)
+            add(CreateSlider(c, "Max debuffs", 1, 28, 1, get("auras_maxDebuff", 5), set("auras_maxDebuff")), 34, 48)
             add(CreateSlider(c, "Taille debuffs", 10, 56, 1, get("auras_debuff_size", 20), set("auras_debuff_size")), 34, 48)
             add(CreateSlider(c, "Ecart orbe", -20, 90, 1, get("auras_debuff_offsetY", 4), set("auras_debuff_offsetY")), 34, 48)
             add(CreateCycle(c, "Position", {
@@ -3337,7 +3350,7 @@ function SP.UIPlumber:BuildSettings()
         section("Buffs", "buffs", function()
             add(CreateCheck(c, "Afficher buffs", get("auras_buff", false), set("auras_buff")), 34, 28)
             add(CreateCheck(c, "Mes sorts uniquement", get("auras_buff_mine_only", false), set("auras_buff_mine_only")), 34, 28)
-            add(CreateSlider(c, "Max buffs", 0, 12, 1, get("auras_maxBuff", 3), set("auras_maxBuff")), 34, 48)
+            add(CreateSlider(c, "Max buffs", 0, 28, 1, get("auras_maxBuff", 3), set("auras_maxBuff")), 34, 48)
             add(CreateSlider(c, "Taille buffs", 10, 56, 1, get("auras_buff_size", 20), set("auras_buff_size")), 34, 48)
             add(CreateSlider(c, "Ecart orbe", -20, 90, 1, get("auras_buff_offsetY", 4), set("auras_buff_offsetY")), 34, 48)
             add(CreateCycle(c, "Position", {
@@ -4085,14 +4098,20 @@ function SP.UIPlumber:BuildSettings()
             section("Progression XP / Réputation", "resourcesXP", function()
                 add(CreateCheck(c, "Arc XP / réputation", get("moi_xp_ring_enabled", true), set("moi_xp_ring_enabled")), 34, 28)
                 if get("moi_xp_ring_enabled", true)() then
+                    add(CreateCycle(c, "Style visuel", {
+                        {value="bar33",   label="Bar3_3"},
+                        {value="premium", label="Premium"},
+                    }, get("moi_xp_ring_style", "bar33"), set("moi_xp_ring_style")), 34, 32)
                     add(CreateCycle(c, "Mode", {
                         {value="auto",       label="Auto (XP puis réputation)"},
                         {value="xp",         label="XP seulement"},
                         {value="reputation", label="Réputation suivie"},
                         {value="hidden",     label="Masqué"},
                     }, get("moi_xp_ring_mode", "auto"), set("moi_xp_ring_mode")), 34, 32)
-                    add(CreateSlider(c, "Alpha arc", 0.00, 1.00, 0.02, get("moi_xp_ring_alpha", 0.75), set("moi_xp_ring_alpha")), 34, 48)
-                    add(CreateSlider(c, "Taille arc", 1.05, 1.60, 0.01, get("moi_xp_ring_scale", 1.22), set("moi_xp_ring_scale")), 34, 48)
+                    add(CreateSlider(c, "Fade / opacite arc", 0.00, 1.00, 0.02, get("moi_xp_ring_alpha", 0.75), set("moi_xp_ring_alpha")), 34, 48)
+                    add(CreateSlider(c, "Taille arc", 0.80, 2.20, 0.01, get("moi_xp_ring_scale", 1.16), set("moi_xp_ring_scale")), 34, 48)
+                    add(CreateSlider(c, "Arc XP X", -120, 120, 1, get("moi_xp_ring_x", 0), set("moi_xp_ring_x")), 34, 48)
+                    add(CreateSlider(c, "Arc XP Y", -120, 120, 1, get("moi_xp_ring_y", 0), set("moi_xp_ring_y")), 34, 48)
                 end
             end, 2)
         end
@@ -4232,6 +4251,7 @@ function SP.UIPlumber:BuildSettings()
                     end
                 end), 34, 28)
                 add(CreateCheck(c, "Verrouiller les boutons", getRoot("lock", true), setRoot("lock")), 34, 28)
+                add(CreateCheck(c, "Indicateur de barre au changement", getRoot("pageFlash", true), setRoot("pageFlash")), 34, 28)
                 add(CreateCycle(c, "Barre a configurer", barOptions, function() return selected end, function(v)
                     root.selected = v
                     self:BuildSettings()

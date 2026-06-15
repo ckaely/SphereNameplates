@@ -2515,9 +2515,9 @@ local GRID_COLS = {
     {key="buttons",  x=88,  w=58,  label="Bout."},
     {key="size",     x=148, w=58,  label="Taille"},
     {key="columns",  x=208, w=54,  label="Col."},
-    {key="paging",   x=264, w=110, label="Pagination"},
-    {key="pageOffset", x=376, w=50, label="Décal."},
-    {key="visibility", x=428, w=108, label="Visibilité"},
+    {key="paging",   x=264, w=104, label="Pagination"},
+    {key="pageOffset", x=370, w=58, label="Suivantes"},
+    {key="visibility", x=430, w=106, label="Visibilité"},
     {key="skin",     x=538, w=34,  label="Skin"},
     {key="detail",   x=574, w=40,  label=""},
 }
@@ -2666,12 +2666,19 @@ function SP.UIPlumber:RenderBarsGrid(parent, root, refreshAB)
             function() return cfg.paging or (i == 1 and "native" or "none") end,
             function(v) cfg.paging = v end, onStructural)
 
-        -- Décalage uniquement pour les barres « Liée »
-        if cfg.paging == "linked" then
-            miniStepper(row, "pageOffset", gb("pageOffset", 0), sb("pageOffset"), -10, 10, 1)
-        else
-            local dx = GridColX("pageOffset")
-            local dash = Text(row, "—", 11, MUTED); dash:SetPoint("LEFT", row, "LEFT", dx + 18, 0)
+        -- Barres suivantes (lecture seule dans la grille ; édition via « ••• »)
+        do
+            local dx, dw = GridColX("pageOffset")
+            local txt = "—"
+            if cfg.paging == "linked" and type(cfg.pageBars) == "table" and #cfg.pageBars > 0 then
+                local sorted = {}
+                for _, v in ipairs(cfg.pageBars) do sorted[#sorted + 1] = v end
+                table.sort(sorted)
+                txt = table.concat(sorted, ",")
+            end
+            local t = Text(row, txt, 11, (txt == "—") and MUTED or GOLD)
+            t:SetPoint("LEFT", row, "LEFT", dx, 0)
+            t:SetWidth(dw); t:SetJustifyH("CENTER")
         end
 
         miniCycle(row, "visibility", GRID_VIS, gb("visibility", "always"), sb("visibility"), onStructural)
@@ -4495,10 +4502,31 @@ function SP.UIPlumber:BuildSettings()
                         add(CreateSlider(c, "Premier slot action", 1, 180, 1,
                             getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
                     elseif mode == "linked" then
-                        add(CreateSlider(c, "Decalage de page", -10, 10, 1, getBar("pageOffset", 0), setBar("pageOffset")), 34, 48)
-                        local hint = Text(c, "Quand tu changes de page, cette barre suit le meme curseur avec un decalage. Ex : decalage +5 => page native 2 affiche la page 7 (sorts 73-84). Pour que les RACCOURCIS de cette barre suivent aussi, active « Raccourcis vers boutons SphereUI » dans les options globales.", 11, MUTED)
+                        if type(cfgBar.pageBars) ~= "table" then cfgBar.pageBars = {} end
+                        local hint = Text(c, "Coche les barres que cette barre affichera l'une apres l'autre quand tu appuies sur « barre suivante ». L'ordre suit le numero de barre. Ex : coche Barre 3 et Barre 5 -> cette barre montre la 3 puis la 5.", 11, MUTED)
                         hint:SetWidth(COLUMN_WIDTH - 54); hint:SetJustifyH("LEFT")
-                        add(hint, 34, 76)
+                        add(hint, 34, 64)
+                        local function hasBar(n)
+                            for _, v in ipairs(cfgBar.pageBars) do if v == n then return true end end
+                            return false
+                        end
+                        local function toggleBar(n)
+                            return function(on)
+                                local list = {}
+                                for _, v in ipairs(cfgBar.pageBars) do
+                                    if v ~= n then list[#list + 1] = v end
+                                end
+                                if on then list[#list + 1] = n end
+                                table.sort(list)
+                                cfgBar.pageBars = list
+                                refreshAB()
+                            end
+                        end
+                        for n = 1, 8 do
+                            if n ~= selected then
+                                add(CreateCheck(c, "Barre " .. n, function() return hasBar(n) end, toggleBar(n)), 34, 26)
+                            end
+                        end
                     end
                 end
             end, 1)

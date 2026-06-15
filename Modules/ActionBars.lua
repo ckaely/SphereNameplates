@@ -86,7 +86,8 @@ local function BarDefaults(index)
         --   "native" : suit la page native (touche « barre suivante ») + postures
         --   "table"  : map page native 1-6 → page affichée (pagination liée)
         paging = index == 1 and "native" or "none",
-        pageOffset = 0, -- mode "linked" : décalage de page vs curseur natif
+        pageBars = {},  -- mode "linked" : barres affichées successivement (par numéro)
+        pageOffset = 0, -- repli legacy (décalage de page)
         pageMap = {}, -- [pageNative]=pageAffichee, mode "table" (legacy/avancé)
         columns = 12,
         size = 36,
@@ -338,6 +339,36 @@ local function ResolveNativePage()
     return NativeActionBarPage()
 end
 
+-- Page (1-11) correspondant aux SLOTS d'une barre SphereUI donnée, d'après son
+-- firstSlot. Permet de raisonner en « numéro de barre » : afficher la barre 3
+-- = afficher ses slots = sa page. Barre N par défaut → page N.
+local function BarPageFromIndex(n)
+    n = tonumber(n) or 1
+    local root = DB().actionbars
+    local bcfg = root and root.bars and root.bars[n]
+    local fs = (bcfg and tonumber(bcfg.firstSlot)) or (1 + (n - 1) * 12)
+    return Clamp(math.floor((fs - 1) / 12) + 1, 1, 11)
+end
+
+-- Page « de base » d'une barre (ce qu'elle affiche en page native 1).
+local function BarBasePage(cfg, barIndex)
+    local fs = tonumber(cfg and cfg.firstSlot) or (1 + ((tonumber(barIndex) or 1) - 1) * 12)
+    return Clamp(math.floor((fs - 1) / 12) + 1, 1, 11)
+end
+
+-- Liste ordonnée (croissante) des barres « suivantes » choisies pour une barre.
+local function BarPageList(cfg)
+    local out = {}
+    if type(cfg) == "table" and type(cfg.pageBars) == "table" then
+        for _, n in ipairs(cfg.pageBars) do
+            local v = tonumber(n)
+            if v then out[#out + 1] = v end
+        end
+        table.sort(out)
+    end
+    return out
+end
+
 -- Mode de pagination d'une barre (compat ascendante avec followPaging).
 local function BarPagingMode(cfg, barIndex)
     if not cfg then return "none" end
@@ -359,10 +390,20 @@ local function ResolveBarDisplayPage(cfg, barIndex)
     if mode == "native" then
         return ResolveMainBarPage()
     elseif mode == "linked" then
-        -- Suit le curseur natif (touche « barre suivante ») avec un décalage
-        -- de pages : décalage +5 → page native 2 affiche la page 7, etc.
+        -- Modèle « barres suivantes » : la barre cycle sur les barres cochées,
+        -- dans l'ordre. Page native 1 = sa propre page ; native 2 = 1re barre
+        -- cochée ; native 3 = 2e ; etc. Repère par NUMÉRO DE BARRE, pas slot.
+        local np = ResolveNativePage()
+        local list = BarPageList(cfg)
+        if #list > 0 then
+            if np <= 1 then return BarBasePage(cfg, barIndex) end
+            local target = list[np - 1]
+            if target then return BarPageFromIndex(target) end
+            return BarBasePage(cfg, barIndex)
+        end
+        -- Repli : ancien décalage de pages (compat profils).
         local off = tonumber(cfg.pageOffset) or 0
-        return Clamp(ResolveNativePage() + off, 1, 11)
+        return Clamp(np + off, 1, 11)
     elseif mode == "table" then
         local np = ResolveNativePage()
         local map = cfg.pageMap
@@ -380,12 +421,23 @@ local function BarPageDriver(cfg, barIndex)
     if mode == "native" then
         return NativePageDriver()
     elseif mode == "linked" then
-        local off = tonumber(cfg.pageOffset) or 0
+        local list = BarPageList(cfg)
         local clauses = {}
-        for np = 2, 6 do
-            clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, Clamp(np + off, 1, 11))
+        if #list > 0 then
+            local base = BarBasePage(cfg, barIndex)
+            for np = 2, 6 do
+                local target = list[np - 1]
+                local page = target and BarPageFromIndex(target) or base
+                clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, page)
+            end
+            clauses[#clauses + 1] = tostring(base)
+        else
+            local off = tonumber(cfg.pageOffset) or 0
+            for np = 2, 6 do
+                clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, Clamp(np + off, 1, 11))
+            end
+            clauses[#clauses + 1] = tostring(Clamp(1 + off, 1, 11))
         end
-        clauses[#clauses + 1] = tostring(Clamp(1 + off, 1, 11))
         return table.concat(clauses, "; ")
     elseif mode == "table" then
         local map = cfg.pageMap or {}

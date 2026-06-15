@@ -2516,10 +2516,10 @@ local GRID_COLS = {
     {key="size",     x=148, w=58,  label="Taille"},
     {key="columns",  x=208, w=54,  label="Col."},
     {key="paging",   x=264, w=104, label="Pagination"},
-    {key="pageOffset", x=370, w=58, label="Suivantes"},
+    {key="pageOffset", x=370, w=58, label="Cycle"},
     {key="visibility", x=430, w=106, label="Visibilité"},
     {key="skin",     x=538, w=34,  label="Skin"},
-    {key="detail",   x=574, w=40,  label=""},
+    {key="detail",   x=574, w=44,  label="Détail"},
 }
 local GRID_WIDTH = 624
 
@@ -2528,6 +2528,64 @@ local function GridColX(key)
         if col.key == key then return col.x, col.w end
     end
     return 0, 40
+end
+
+-- Menu déroulant réutilisable pour les cellules de la grille.
+-- items = { {text=, checked=bool/fn, onClick=fn} }. keepOpen=true → reste
+-- ouvert (multi-sélection, ex. enchaînement des barres).
+function SP.UIPlumber:ShowCellMenu(anchor, items, keepOpen, width)
+    width = width or 160
+    local m = self._cellMenu
+    if not m then
+        m = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        m:SetFrameStrata("FULLSCREEN_DIALOG")
+        m:SetFrameLevel(995)
+        m:SetBackdrop({bgFile="Interface\\ChatFrame\\ChatFrameBackground", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", edgeSize=10, insets={left=2,right=2,top=2,bottom=2}})
+        m:SetBackdropColor(0.03, 0.025, 0.02, 0.98)
+        m:SetBackdropBorderColor(0.85, 0.55, 0.22, 0.85)
+        m.pool = {}
+        self._cellMenu = m
+    end
+    if self._openDropdown and self._openDropdown ~= m then self._openDropdown:Hide() end
+    for _, r in ipairs(m.pool) do r:Hide() end
+
+    local function rowChecked(it)
+        local c = it.checked
+        if type(c) == "function" then c = c() end
+        return c and true or false
+    end
+
+    for idx, it in ipairs(items) do
+        local r = m.pool[idx]
+        if not r then
+            r = CreateFrame("Button", nil, m)
+            r.bg = r:CreateTexture(nil, "BACKGROUND"); r.bg:SetAllPoints()
+            r.check = Text(r, "", 12, GOLD); r.check:SetPoint("LEFT", r, "LEFT", 7, 0)
+            r.lbl = Text(r, "", 12, GOLD); r.lbl:SetPoint("LEFT", r, "LEFT", 24, 0)
+            m.pool[idx] = r
+        end
+        r:SetSize(width - 8, 22)
+        r:SetPoint("TOPLEFT", m, "TOPLEFT", 4, -4 - (idx - 1) * 24)
+        r.lbl:SetText(it.text)
+        r.check:SetText(rowChecked(it) and "|cFFFFD200x|r" or "")
+        r.bg:SetColorTexture(0.18, 0.12, 0.06, 0)
+        r:SetScript("OnEnter", function(s) s.bg:SetColorTexture(0.20, 0.13, 0.07, 0.85) end)
+        r:SetScript("OnLeave", function(s) s.bg:SetColorTexture(0.18, 0.12, 0.06, 0) end)
+        r:SetScript("OnClick", function(s)
+            if it.onClick then it.onClick() end
+            if keepOpen then
+                s.check:SetText(rowChecked(it) and "|cFFFFD200x|r" or "")
+            else
+                m:Hide(); self._openDropdown = nil
+            end
+        end)
+        r:Show()
+    end
+    m:SetSize(width, #items * 24 + 8)
+    m:ClearAllPoints()
+    m:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    m:Show()
+    self._openDropdown = m
 end
 
 function SP.UIPlumber:RenderBarsGrid(parent, root, refreshAB)
@@ -2640,67 +2698,194 @@ function SP.UIPlumber:RenderBarsGrid(parent, root, refreshAB)
         self:BuildSettings()
     end
 
+    -- petit bouton texte générique (fond sombre + label cliquable)
+    local function cellButton(row, key, getLabel)
+        local x, w = GridColX(key)
+        local b = CreateFrame("Button", nil, row)
+        b:SetSize(w, 22)
+        b:SetPoint("LEFT", row, "LEFT", x, 0)
+        b.bg = b:CreateTexture(nil, "BACKGROUND"); b.bg:SetAllPoints()
+        b.bg:SetColorTexture(0.10, 0.07, 0.04, 0.85)
+        b.lbl = Text(b, getLabel and getLabel() or "", 11, GOLD); b.lbl:SetPoint("CENTER")
+        b:SetScript("OnEnter", function(s) s.bg:SetColorTexture(0.18, 0.12, 0.06, 0.9) end)
+        b:SetScript("OnLeave", function(s) s.bg:SetColorTexture(0.10, 0.07, 0.04, 0.85) end)
+        return b
+    end
+
+    local yCursor = -24
+    local expanded = tonumber(self._gridExpand)
+
     for i = 1, nbars do
         local cfg = root.bars[i] or {}
-        local row = CreateFrame("Button", nil, grid)
+        local row = CreateFrame("Frame", nil, grid)
         row:SetSize(GRID_WIDTH, rowH - 2)
-        row:SetPoint("TOPLEFT", grid, "TOPLEFT", 0, -24 - (i - 1) * rowH)
+        row:SetPoint("TOPLEFT", grid, "TOPLEFT", 0, yCursor)
+        yCursor = yCursor - rowH
         local rbg = row:CreateTexture(nil, "BACKGROUND")
         rbg:SetAllPoints()
         rbg:SetColorTexture(0.95, 0.62, 0.22, (i == selected) and 0.10 or 0)
 
-        local nx = GridColX("name")
-        local nm = Text(row, "Barre " .. i, 11, (i == selected) and WHITE or GOLD)
-        nm:SetPoint("LEFT", row, "LEFT", nx, 0)
-
         local function gb(k, d) return function() if cfg[k] ~= nil then return cfg[k] end return d end end
         local function sb(k) return function(v) cfg[k] = v end end
+
+        -- Nom cliquable → sélectionne la barre
+        local nx = GridColX("name")
+        local nameBtn = CreateFrame("Button", nil, row)
+        nameBtn:SetSize(46, rowH - 4)
+        nameBtn:SetPoint("LEFT", row, "LEFT", nx - 2, 0)
+        local nm = Text(nameBtn, "Barre " .. i, 11, (i == selected) and WHITE or GOLD)
+        nm:SetPoint("LEFT", nameBtn, "LEFT", 2, 0)
+        nameBtn:SetScript("OnClick", function()
+            root.selected = i; refreshAB(); self:BuildSettings()
+        end)
 
         miniCheck(row, "enabled", gb("enabled", i == 1), sb("enabled"), onStructural)
         miniStepper(row, "buttons", gb("buttons", 12), sb("buttons"), 1, 12, 1)
         miniStepper(row, "size", gb("size", 36), sb("size"), 20, 72, 2)
         miniStepper(row, "columns", gb("columns", 12), sb("columns"), 1, 12, 1)
 
-        local pagingOpts = (i == 1) and GRID_PAGING_MAIN or GRID_PAGING_OTHER
-        miniCycle(row, "paging", pagingOpts,
-            function() return cfg.paging or (i == 1 and "native" or "none") end,
-            function(v) cfg.paging = v end, onStructural)
-
-        -- Barres suivantes (lecture seule dans la grille ; édition via « ••• »)
-        do
-            local dx, dw = GridColX("pageOffset")
-            local txt = "—"
-            if cfg.paging == "linked" and type(cfg.pageBars) == "table" and #cfg.pageBars > 0 then
-                local sorted = {}
-                for _, v in ipairs(cfg.pageBars) do sorted[#sorted + 1] = v end
-                table.sort(sorted)
-                txt = table.concat(sorted, ",")
-            end
-            local t = Text(row, txt, 11, (txt == "—") and MUTED or GOLD)
-            t:SetPoint("LEFT", row, "LEFT", dx, 0)
-            t:SetWidth(dw); t:SetJustifyH("CENTER")
+        -- Pagination = menu déroulant (s'affiche aussi pour la barre 1)
+        local function pagingLabel()
+            local mode = cfg.paging or (i == 1 and "native" or "none")
+            return (mode == "native" and "Native") or (mode == "linked" and "Liée") or "Aucune"
         end
+        local pagBtn = cellButton(row, "paging", pagingLabel)
+        pagBtn:SetScript("OnClick", function()
+            local opts = (i == 1)
+                and {{value="native",text="Native"}, {value="none",text="Aucune"}}
+                or  {{value="none",text="Aucune"}, {value="linked",text="Liée"}}
+            local items = {}
+            for _, o in ipairs(opts) do
+                items[#items + 1] = {
+                    text = o.text,
+                    checked = function() return (cfg.paging or (i == 1 and "native" or "none")) == o.value end,
+                    onClick = function() cfg.paging = o.value; refreshAB(); self:BuildSettings() end,
+                }
+            end
+            self:ShowCellMenu(pagBtn, items, false, 120)
+        end)
 
-        miniCycle(row, "visibility", GRID_VIS, gb("visibility", "always"), sb("visibility"), onStructural)
+        -- Cycle = menu checklist des barres affichées successivement
+        local function cycleLabel()
+            if cfg.paging == "linked" and type(cfg.pageBars) == "table" and #cfg.pageBars > 0 then
+                local s = {}; for _, v in ipairs(cfg.pageBars) do s[#s + 1] = v end
+                table.sort(s); return table.concat(s, ",")
+            end
+            return "—"
+        end
+        local cycBtn = cellButton(row, "pageOffset", cycleLabel)
+        cycBtn.lbl:SetTextColor((cycleLabel() == "—") and MUTED[1] or GOLD[1],
+            (cycleLabel() == "—") and MUTED[2] or GOLD[2], (cycleLabel() == "—") and MUTED[3] or GOLD[3], 1)
+        cycBtn:SetScript("OnClick", function()
+            if type(cfg.pageBars) ~= "table" then cfg.pageBars = {} end
+            local items = {}
+            for n = 1, 8 do
+                if n ~= i then
+                    local bn = n
+                    items[#items + 1] = {
+                        text = "Barre " .. bn,
+                        checked = function()
+                            for _, v in ipairs(cfg.pageBars) do if v == bn then return true end end
+                            return false
+                        end,
+                        onClick = function()
+                            local has, list = false, {}
+                            for _, v in ipairs(cfg.pageBars) do
+                                if v == bn then has = true else list[#list + 1] = v end
+                            end
+                            if not has then list[#list + 1] = bn end
+                            table.sort(list); cfg.pageBars = list
+                            if #list > 0 and cfg.paging ~= "linked" then cfg.paging = "linked" end
+                            refreshAB(); cycBtn.lbl:SetText(cycleLabel())
+                        end,
+                    }
+                end
+            end
+            self:ShowCellMenu(cycBtn, items, true, 120)
+        end)
+
+        -- Visibilité = menu déroulant
+        local function visLabel()
+            local cur = cfg.visibility or "always"
+            for _, o in ipairs(GRID_VIS) do if o.value == cur then return o.label end end
+            return "Toujours"
+        end
+        local visBtn = cellButton(row, "visibility", visLabel)
+        visBtn:SetScript("OnClick", function()
+            local items = {}
+            for _, o in ipairs(GRID_VIS) do
+                items[#items + 1] = {
+                    text = o.label,
+                    checked = function() return (cfg.visibility or "always") == o.value end,
+                    onClick = function() cfg.visibility = o.value; refreshAB(); self:BuildSettings() end,
+                }
+            end
+            self:ShowCellMenu(visBtn, items, false, 130)
+        end)
 
         miniCheck(row, "skin",
             function() return cfg.buttonSkin == "shadowcircle" end,
             function(on) cfg.buttonSkin = on and "shadowcircle" or "none" end, onStructural)
 
-        -- Bouton détail (⋯) : sélectionne la barre pour les options avancées
-        local dx, dw = GridColX("detail")
-        local det = CreateFrame("Button", nil, row)
-        det:SetSize(dw - 8, 20)
-        det:SetPoint("LEFT", row, "LEFT", dx, 0)
-        local dbg = det:CreateTexture(nil,"BACKGROUND"); dbg:SetAllPoints(); dbg:SetColorTexture(0.12,0.09,0.05,0.85)
-        local dl = Text(det, "•••", 12, GOLD); dl:SetPoint("CENTER")
-        det:SetScript("OnClick", function()
-            root.selected = i
-            refreshAB()
-            self:BuildSettings()
+        -- Chevron « Détail » : déplie les options de la barre sous la ligne
+        local cvX = GridColX("detail")
+        local chev = CreateFrame("Button", nil, row)
+        chev:SetSize(40, 20)
+        chev:SetPoint("LEFT", row, "LEFT", cvX, 0)
+        local cbg = chev:CreateTexture(nil, "BACKGROUND"); cbg:SetAllPoints()
+        cbg:SetColorTexture(0.10, 0.20, 0.30, 0.55)
+        local clbl = Text(chev, (expanded == i) and "v Réduire" or "> Options", 10, {0.6, 0.85, 1.0})
+        clbl:SetPoint("CENTER")
+        chev:SetScript("OnClick", function()
+            self._gridExpand = (self._gridExpand == i) and nil or i
+            refreshAB(); self:BuildSettings()
         end)
+
+        -- ── Panneau de détail inline ────────────────────────────────────────
+        if expanded == i then
+            local panel = CreateFrame("Frame", nil, grid)
+            panel:SetPoint("TOPLEFT", grid, "TOPLEFT", 10, yCursor)
+            panel:SetWidth(GRID_WIDTH - 20)
+            local pbg2 = panel:CreateTexture(nil, "BACKGROUND"); pbg2:SetAllPoints()
+            pbg2:SetColorTexture(0.05, 0.04, 0.03, 0.55)
+            local py = -10
+            local function addDetail(w, h)
+                w:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, py)
+                py = py - (h or 32)
+            end
+            local function dgb(k, d) return function() if cfg[k] ~= nil then return cfg[k] end return d end end
+            local function dsb(k) return function(v) cfg[k] = v end end
+
+            addDetail(CreateCycle(panel, "Orientation", {
+                {value="horizontal", label="Horizontale"},
+                {value="vertical", label="Verticale"},
+                {value="grid", label="Grille"},
+            }, dgb("orientation", "horizontal"), dsb("orientation")), 34)
+            addDetail(CreateSlider(panel, "Espacement", 0, 16, 1, dgb("spacing", 4), dsb("spacing")), 48)
+            addDetail(CreateSlider(panel, "Echelle", 0.50, 2.00, 0.05, dgb("scale", 1.0), dsb("scale")), 48)
+            if i == 1 or i == 6 then
+                addDetail(CreateCycle(panel, "Ancrage", {
+                    {value="moi_left", label="Moi gauche"},
+                    {value="moi_right", label="Moi droite"},
+                    {value="free", label="Libre"},
+                }, dgb("anchorMode", "free"), dsb("anchorMode")), 34)
+            end
+            addDetail(CreateSlider(panel, "Position X", -1000, 1000, 1, dgb("x", 0), dsb("x")), 48)
+            addDetail(CreateSlider(panel, "Position Y", -700, 700, 1, dgb("y", -300), dsb("y")), 48)
+            addDetail(CreateSlider(panel, "Alpha", 0.05, 1.00, 0.05, dgb("alpha", 1.0), dsb("alpha")), 48)
+            addDetail(CreateSlider(panel, "Zoom survol", 1.00, 1.50, 0.02, dgb("hoverScale", 1.08), dsb("hoverScale")), 48)
+            if cfg.buttonSkin == "shadowcircle" then
+                addDetail(CreateSlider(panel, "Alpha Shadow Circle", 0, 1, 0.05, dgb("skinAlpha", 0.95), dsb("skinAlpha")), 48)
+                addDetail(CreateCheck(panel, "Assombrir en recharge", dgb("cooldownShade", true), dsb("cooldownShade")), 28)
+            end
+            addDetail(CreateCheck(panel, "Clic au press", dgb("clickOnDown", false), dsb("clickOnDown")), 28)
+            local panelH = -py + 10
+            panel:SetHeight(panelH)
+            yCursor = yCursor - panelH - 4
+        end
     end
 
+    grid:SetHeight(-yCursor + 8)
     return grid
 end
 

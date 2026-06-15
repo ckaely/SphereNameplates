@@ -1052,18 +1052,9 @@ function M:UpdateCooldownSkin(btn)
         self:ClearCooldownSkin(btn)
         return
     end
-    -- Valeurs lisibles : texte custom stable + ombre/rotation.
-    -- Valeurs secretes : RegisterCooldownSkin coupe cette branche.
-    if btn.cdText then
-        local txt = FormatCooldownTime(remaining)
-        if txt ~= "" then
-            btn.cdText:SetText(txt)
-            btn.cdText:Show()
-        else
-            btn.cdText:SetText("")
-            btn.cdText:Hide()
-        end
-    end
+    -- cdText custom DÉSACTIVÉ (BUG-048) : les chiffres natifs de la CooldownFrame
+    -- affichent le temps restant. On ne garde que l'ombre/anneau décoratifs.
+    if btn.cdText then btn.cdText:Hide() end
     if btn.cooldownShade and SkinEnabled(cfg) and cfg.cooldownShade ~= false then
         btn.cooldownShade:SetVertexColor(0, 0, 0, Clamp(cfg.cooldownShadeAlpha, 0, 1) * remainingRatio)
         btn.cooldownShade:Show()
@@ -1139,7 +1130,8 @@ function M:RegisterCooldownSkin(btn, start, duration, enable)
     end
     btn._skinCooldownStart = s
     btn._skinCooldownDuration = d
-    if btn.cooldown then pcall(btn.cooldown.SetHideCountdownNumbers, btn.cooldown, true) end
+    -- Les chiffres natifs restent TOUJOURS visibles (BUG-048) : l'ombre/anneau
+    -- custom ne fait que les compléter, il ne les remplace plus.
     self.cooldownSkinButtons = self.cooldownSkinButtons or {}
     self.cooldownSkinButtons[btn] = true
     self:EnsureCooldownSkinTicker()
@@ -1198,16 +1190,19 @@ function M:CreateButton(bar, barIndex, buttonIndex)
 
     b.cooldown = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
     b.cooldown:SetAllPoints(b.icon)
-    -- BUG-042 : tout swipe (custom OU défaut) est cassé/carré en 12.x sur nos
-    -- boutons ronds → swipe coupé. Le TEMPS RESTANT est rendu par les chiffres
-    -- NATIFS du moteur (SetHideCountdownNumbers(false)) : ils s'affichent même
-    -- quand GetActionCooldown renvoie des secret numbers, là où tout texte
-    -- custom Lua serait impossible. L'ombre/anneau custom (cooldownShade)
-    -- complète quand les valeurs sont lisibles.
-    pcall(b.cooldown.SetDrawSwipe, b.cooldown, false)
-    pcall(b.cooldown.SetDrawEdge, b.cooldown, false)
+    -- BUG-048 : le timer doit TOUJOURS être visible (sinon jeu à l'aveugle).
+    -- On laisse la CooldownFrame NATIVE tout faire, comme les barres Blizzard :
+    --   • SetDrawSwipe(true)            → balayage radial (assombrissement).
+    --   • SetHideCountdownNumbers(false) → chiffres natifs du moteur.
+    --   • SetUseCircularEdge(true)       → balayage circulaire (boutons ronds).
+    -- Le moteur C gère les valeurs SECRÈTES de GetActionCooldown nativement
+    -- (comme les barres Blizzard) → marche pour GCD courts ET cooldowns longs.
+    pcall(b.cooldown.SetDrawSwipe, b.cooldown, true)
+    pcall(b.cooldown.SetDrawEdge, b.cooldown, true)
     pcall(b.cooldown.SetDrawBling, b.cooldown, false)
-    pcall(b.cooldown.SetHideCountdownNumbers, b.cooldown, true)
+    pcall(b.cooldown.SetHideCountdownNumbers, b.cooldown, false)
+    pcall(b.cooldown.SetUseCircularEdge, b.cooldown, true)
+    pcall(b.cooldown.SetSwipeColor, b.cooldown, 0, 0, 0, 0.55)
 
     b.cdText = b:CreateFontString(nil, "OVERLAY")
     b.cdText:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")

@@ -2752,7 +2752,7 @@ function SP.UIPlumber:RenderBarsGrid(parent, root, refreshAB)
         local pagBtn = cellButton(row, "paging", pagingLabel)
         pagBtn:SetScript("OnClick", function()
             local opts = (i == 1)
-                and {{value="native",text="Native"}, {value="none",text="Aucune"}}
+                and {{value="native",text="Native"}, {value="linked",text="Liée"}, {value="none",text="Aucune"}}
                 or  {{value="none",text="Aucune"}, {value="linked",text="Liée"}}
             local items = {}
             for _, o in ipairs(opts) do

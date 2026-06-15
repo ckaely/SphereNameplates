@@ -86,7 +86,8 @@ local function BarDefaults(index)
         --   "native" : suit la page native (touche « barre suivante ») + postures
         --   "table"  : map page native 1-6 → page affichée (pagination liée)
         paging = index == 1 and "native" or "none",
-        pageMap = {}, -- [pageNative]=pageAffichee, utilisé en mode "table"
+        pageOffset = 0, -- mode "linked" : décalage de page vs curseur natif
+        pageMap = {}, -- [pageNative]=pageAffichee, mode "table" (legacy/avancé)
         columns = 12,
         size = 36,
         spacing = 4,
@@ -159,8 +160,8 @@ function M:EnsureDefaults()
         primaryPairYOffset = 0,
         pageFlash = true,        -- indicateur éphémère "Barre N" au changement de page
         pageFlashDuration = 1.4, -- secondes avant le fondu
-        ownBindings = true,      -- router les raccourcis vers NOS boutons secure
-        castOnDown = true,       -- déclencher au press (réactivité max, anti-latence)
+        ownBindings = false,     -- (désactivé : casse le cast par raccourci en 12.x — on garde les raccourcis natifs Blizzard)
+        castOnDown = true,       -- déclencher au press (réactivité max, anti-latence) via la CVar Blizzard
     })
     if root.replaceBlizzard == nil then root.replaceBlizzard = true end
     if root.hideBlizzard == nil then root.hideBlizzard = true end
@@ -211,6 +212,13 @@ function M:EnsureDefaults()
             if cfg and type(cfg.pageMap) ~= "table" then cfg.pageMap = {} end
         end
         root.pagingFieldVersion = 1
+    end
+    -- Réinitialisation de sécurité : la possession des raccourcis (ownBindings)
+    -- cassait le cast de la barre principale en 12.x. On la force OFF une fois
+    -- pour réparer les profils impactés ; les raccourcis natifs reprennent.
+    if root.ownBindingsResetV1 ~= 1 then
+        root.ownBindings = false
+        root.ownBindingsResetV1 = 1
     end
     return root
 end
@@ -350,6 +358,11 @@ local function ResolveBarDisplayPage(cfg, barIndex)
     local mode = BarPagingMode(cfg, barIndex)
     if mode == "native" then
         return ResolveMainBarPage()
+    elseif mode == "linked" then
+        -- Suit le curseur natif (touche « barre suivante ») avec un décalage
+        -- de pages : décalage +5 → page native 2 affiche la page 7, etc.
+        local off = tonumber(cfg.pageOffset) or 0
+        return Clamp(ResolveNativePage() + off, 1, 11)
     elseif mode == "table" then
         local np = ResolveNativePage()
         local map = cfg.pageMap
@@ -366,6 +379,14 @@ local function BarPageDriver(cfg, barIndex)
     local mode = BarPagingMode(cfg, barIndex)
     if mode == "native" then
         return NativePageDriver()
+    elseif mode == "linked" then
+        local off = tonumber(cfg.pageOffset) or 0
+        local clauses = {}
+        for np = 2, 6 do
+            clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, Clamp(np + off, 1, 11))
+        end
+        clauses[#clauses + 1] = tostring(Clamp(1 + off, 1, 11))
+        return table.concat(clauses, "; ")
     elseif mode == "table" then
         local map = cfg.pageMap or {}
         local clauses = {}
@@ -1785,10 +1806,33 @@ function M:ShowEditMenu(bar)
         local nextValue = orientation == "horizontal" and "vertical" or orientation == "vertical" and "grid" or "horizontal"
         apply("orientation", nextValue)
     end)
-    if (bar._index or 1) == 1 then
-        addRow("Page native", cfg.followPaging and "ON" or "OFF", function() apply("followPaging", not cfg.followPaging) end, function() apply("followPaging", not cfg.followPaging) end)
+    local barIdx = bar._index or 1
+    if barIdx == 1 then
+        -- Barre principale : suit la touche « barre suivante » de WoW.
+        local on = BarPagingMode(cfg, 1) ~= "none"
+        addRow("Pagination", on and "Page native" or "Aucune", function()
+            apply("paging", on and "none" or "native")
+        end, function()
+            apply("paging", on and "none" or "native")
+        end)
     else
-        addRow("Page native", "Barre 1 seule", function() end, function() end)
+        -- Barres secondaires : liées au curseur natif avec un décalage.
+        local mode = BarPagingMode(cfg, barIdx)
+        local label = (mode == "linked" and "Liée") or (mode == "native" and "Page native") or "Aucune"
+        local function cyclePaging(dir)
+            local order = { "none", "linked", "native" }
+            local cur = 1
+            for k, v in ipairs(order) do if v == mode then cur = k break end end
+            cur = cur + dir
+            if cur < 1 then cur = #order elseif cur > #order then cur = 1 end
+            apply("paging", order[cur])
+        end
+        addRow("Pagination", label, function() cyclePaging(-1) end, function() cyclePaging(1) end)
+        if mode == "linked" then
+            addRow("Décalage page", tostring(tonumber(cfg.pageOffset) or 0),
+                function() apply("pageOffset", Clamp((cfg.pageOffset or 0) - 1, -10, 10)) end,
+                function() apply("pageOffset", Clamp((cfg.pageOffset or 0) + 1, -10, 10)) end)
+        end
     end
 
     f:Show()
@@ -2070,16 +2114,14 @@ function M:ApplyBarBindings(bar, cfg, index)
     if InCombat() then self._pendingRebuild = true return end
     if ClearOverrideBindings then pcall(ClearOverrideBindings, bar) end
     local root = self:EnsureDefaults()
-    if root.ownBindings == false then return end
+    if root.ownBindings ~= true then return end
     if not (root.enabled and cfg and cfg.enabled) then return end
     if IsSpecialBarIndex(index) then return end
+    -- RÈGLE DURE : ne JAMAIS prendre possession des raccourcis de la barre 1.
+    -- Ses touches ACTIONBUTTON restent natives (cast fiable + barre véhicule).
+    if tonumber(index) == 1 then return end
     local family = BAR_BINDING_FAMILY[tonumber(index) or 0]
     if not family or not (GetBindingKey and SetOverrideBindingClick) then return end
-    -- Politesse véhicule/monture : la barre 1 utilise la famille ACTIONBUTTON,
-    -- comme la barre véhicule/override Blizzard. Pendant un état spécial, on
-    -- LAISSE les touches natives à la barre véhicule (on a déjà clear nos
-    -- overrides ci-dessus) ; on les reprend en sortie d'état (event handler).
-    if tonumber(index) == 1 and IsSpecialActionState() then return end
     local count = Clamp(cfg.buttons, 1, MAX_BUTTONS)
     for i = 1, count do
         local btn = bar.buttons[i]
@@ -2664,11 +2706,15 @@ end
 function M:Init()
     self:EnsureDefaults()
     self:EnsureEventFrame()
-    -- Les chiffres natifs de recharge exigent la CVar globale : c'est le
-    -- réglage Blizzard "Afficher les temps de recharge" — on l'active quand
-    -- nos barres sont actives (hors combat, demandé par l'utilisateur).
+    -- Réglages CVar hors combat quand nos barres sont actives :
+    --   countdownForCooldowns : chiffres de recharge natifs.
+    --   ActionButtonUseKeyDown : cast AU PRESS = supprime la latence ressentie
+    --     (sans ça, les actions partent au RELÂCHEMENT de la touche → ~0.5s).
     if self:IsEnabled() and not InCombat() then
         pcall(SetCVar, "countdownForCooldowns", "1")
+        if DB().actionbars and DB().actionbars.castOnDown ~= false then
+            pcall(SetCVar, "ActionButtonUseKeyDown", "1")
+        end
     end
     self:Refresh()
 end

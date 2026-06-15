@@ -4270,30 +4270,28 @@ function SP.UIPlumber:BuildSettings()
                 local function pmode()
                     return cfgBar.paging or (selected == 1 and "native" or "none")
                 end
-                add(CreateCycle(c, "Pagination", {
-                    {value="none",   label="Aucune (slots fixes)"},
-                    {value="native", label="Page native (touche barre suivante)"},
-                    {value="table",  label="Liee (table par page)"},
-                }, pmode, function(v)
-                    cfgBar.paging = v
-                    refreshAB()
-                    self:BuildSettings()
-                end), 34, 32)
-
-                local mode = pmode()
-                if mode == "none" then
-                    add(CreateSlider(c, "Premier slot action", 1, 180, 1,
-                        getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
-                elseif mode == "table" then
-                    if type(cfgBar.pageMap) ~= "table" then cfgBar.pageMap = {} end
-                    local hint = Text(c, "Quand tu changes de page (touche barre suivante), chaque page native pointe vers la page affichee choisie. Ex : page native 2 -> page 7 = la barre montre les sorts 73-84.", 11, MUTED)
-                    hint:SetWidth(COLUMN_WIDTH - 54)
-                    hint:SetJustifyH("LEFT")
-                    add(hint, 34, 52)
-                    local function getMap(n) return function() return tonumber(cfgBar.pageMap[n]) or n end end
-                    local function setMap(n) return function(v) cfgBar.pageMap[n] = tonumber(v); refreshAB() end end
-                    for n = 1, 6 do
-                        add(CreateSlider(c, "Page native " .. n .. " -> affiche", 1, 11, 1, getMap(n), setMap(n)), 34, 48)
+                if selected == 1 then
+                    add(CreateCycle(c, "Pagination", {
+                        {value="native", label="Page native (touche barre suivante)"},
+                        {value="none",   label="Aucune (slots fixes)"},
+                    }, pmode, function(v) cfgBar.paging = v; refreshAB(); self:BuildSettings() end), 34, 32)
+                    local hint = Text(c, "La barre principale suit la touche WoW « barre d'action suivante ». Ses raccourcis restent natifs (cast fiable).", 11, MUTED)
+                    hint:SetWidth(COLUMN_WIDTH - 54); hint:SetJustifyH("LEFT")
+                    add(hint, 34, 40)
+                else
+                    add(CreateCycle(c, "Pagination", {
+                        {value="none",   label="Aucune (slots fixes)"},
+                        {value="linked", label="Liee a la page native"},
+                    }, pmode, function(v) cfgBar.paging = v; refreshAB(); self:BuildSettings() end), 34, 32)
+                    local mode = pmode()
+                    if mode == "none" then
+                        add(CreateSlider(c, "Premier slot action", 1, 180, 1,
+                            getBar("firstSlot", 1 + ((selected - 1) * 12)), setBar("firstSlot")), 34, 48)
+                    elseif mode == "linked" then
+                        add(CreateSlider(c, "Decalage de page", -10, 10, 1, getBar("pageOffset", 0), setBar("pageOffset")), 34, 48)
+                        local hint = Text(c, "Quand tu changes de page, cette barre suit le meme curseur avec un decalage. Ex : decalage +5 => page native 2 affiche la page 7 (sorts 73-84). Pour que les RACCOURCIS de cette barre suivent aussi, active « Raccourcis vers boutons SphereUI » dans les options globales.", 11, MUTED)
+                        hint:SetWidth(COLUMN_WIDTH - 54); hint:SetJustifyH("LEFT")
+                        add(hint, 34, 76)
                     end
                 end
             end, 1)

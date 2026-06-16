@@ -161,7 +161,7 @@ function M:EnsureDefaults()
         primaryPairYOffset = 0,
         pageFlash = true,        -- indicateur éphémère "Barre N" au changement de page
         pageFlashDuration = 1.4, -- secondes avant le fondu
-        ownBindings = true,      -- router les raccourcis des barres 2-8 vers nos boutons secure (clavier suit la pagination)
+        ownBindings = false,     -- possession des raccourcis désactivée : non fiable en 12.x (cast ne suit pas, feedback double). Raccourcis natifs Blizzard conservés.
         castOnDown = true,       -- déclencher au press (réactivité max, anti-latence) via la CVar Blizzard
     })
     if root.replaceBlizzard == nil then root.replaceBlizzard = true end
@@ -227,6 +227,13 @@ function M:EnsureDefaults()
     if root.ownBindingsResetV2 ~= 1 then
         root.ownBindings = true
         root.ownBindingsResetV2 = 1
+    end
+    -- V3 : la possession des raccourcis est définitivement remise OFF. Elle
+    -- n'est pas fiable dans le modèle secure de WoW 12.x (le cast ne suit pas
+    -- la barre affichée, feedback double). Les raccourcis natifs sont conservés.
+    if root.ownBindingsResetV3 ~= 1 then
+        root.ownBindings = false
+        root.ownBindingsResetV3 = 1
     end
     return root
 end
@@ -384,8 +391,11 @@ local function BarPagingMode(cfg, barIndex)
     return (tonumber(barIndex) == 1) and "native" or "none"
 end
 
+-- Uniquement la barre 1 native est liée au FEEDBACK des boutons natifs Blizzard
+-- (ActionButtonDown). Les barres 2-8 paginées ne doivent PAS s'enregistrer dans
+-- ce mapping, sinon l'appui d'une touche de bar 1 fait clignoter aussi bar 6.
 local function FollowsNativePaging(cfg, barIndex)
-    return BarPagingMode(cfg, barIndex) ~= "none"
+    return tonumber(barIndex) == 1 and BarPagingMode(cfg, barIndex) == "native"
 end
 
 -- Page AFFICHÉE par une barre, identique côté visuel et côté secure :

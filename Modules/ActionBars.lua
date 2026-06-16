@@ -396,8 +396,13 @@ local function ResolveBarDisplayPage(cfg, barIndex)
         local np = ResolveNativePage()
         local list = BarPageList(cfg)
         if #list > 0 then
-            if np <= 1 then return BarBasePage(cfg, barIndex) end
-            local target = list[np - 1]
+            -- Cyclique : le curseur natif (1-6) BOUCLE sur les N+1 états
+            -- (propre + N barres). La séquence se limite donc au nombre de
+            -- pages définies (pas de défilement dans le vide).
+            local states = #list + 1
+            local idx = (np - 1) % states   -- 0 = propre, 1..N = barres
+            if idx == 0 then return BarBasePage(cfg, barIndex) end
+            local target = list[idx]
             if target then return BarPageFromIndex(target) end
             return BarBasePage(cfg, barIndex)
         end
@@ -425,9 +430,10 @@ local function BarPageDriver(cfg, barIndex)
         local clauses = {}
         if #list > 0 then
             local base = BarBasePage(cfg, barIndex)
+            local states = #list + 1
             for np = 2, 6 do
-                local target = list[np - 1]
-                local page = target and BarPageFromIndex(target) or base
+                local idx = (np - 1) % states
+                local page = (idx == 0) and base or (BarPageFromIndex(list[idx]) or base)
                 clauses[#clauses + 1] = ("[bar:%d] %d"):format(np, page)
             end
             clauses[#clauses + 1] = tostring(base)
@@ -916,16 +922,10 @@ local function EnsureButtonSkin(btn)
     btn.skinRing:SetAlpha(0)
     btn.skinRing:Hide()
 
-    btn.cooldownArc = {}
-    for i = 1, COOLDOWN_ARC_SEGMENTS do
-        local seg = btn:CreateTexture(nil, "OVERLAY", nil, 7)
-        seg:SetTexture(WHITE)
-        seg:SetBlendMode("ADD")
-        seg:SetVertexColor(1.0, 0.88, 0.42, 1)
-        seg:SetAlpha(0)
-        seg:Hide()
-        btn.cooldownArc[i] = seg
-    end
+    -- BUG-049 : l'arc de cooldown custom (segments + ticker 0.03s) est SUPPRIMÉ.
+    -- Il repeignait 36 segments par bouton à 33 FPS → grosse chute de FPS au
+    -- lancement d'un sort en recharge. Le balayage + chiffres NATIFS de la
+    -- CooldownFrame (BUG-048) gèrent tout, gratuitement côté C.
 end
 
 local function LayoutCooldownArc(btn)
@@ -1096,47 +1096,12 @@ function M:EnsureCooldownSkinTicker()
     self.cooldownSkinTicker = f
 end
 
-function M:RegisterCooldownSkin(btn, start, duration, enable)
-    if not btn then return end
-    local cfg = self:GetBarConfig(btn._barIndex)
-    local okOff, isOff = pcall(function()
-        return cfg.showCooldown == false or enable == 0
-    end)
-    if okOff and isOff then
-        self:ClearCooldownSkin(btn)
-        return
-    end
-    -- BUG-041 : tonumber(secret) RETOURNE le secret (pas nil!) → toute
-    -- comparaison ensuite crash. L'animation custom (ombre+rotation) exige
-    -- des valeurs LISIBLES : si start/duration sont secrets, on laisse le
-    -- swipe natif C-side seul (SetCooldownFrame) et on coupe le skin.
-    local plain = SP.IsPlainNumber
-    if not (plain and plain(start) and plain(duration)) then
-        self:ClearCooldownSkin(btn)
-        if btn.cooldown then pcall(btn.cooldown.SetHideCountdownNumbers, btn.cooldown, false) end
-        return
-    end
-    local s, d = tonumber(start) or 0, tonumber(duration) or 0
-    if d <= MIN_SKIN_COOLDOWN then
-        self:ClearCooldownSkin(btn)
-        return
-    end
-    local okActive, isActive = pcall(function()
-        return (s + d) > ((GetTime and GetTime()) or 0)
-    end)
-    if not okActive or not isActive then
-        self:ClearCooldownSkin(btn)
-        return
-    end
-    btn._skinCooldownStart = s
-    btn._skinCooldownDuration = d
-    -- Les chiffres natifs restent TOUJOURS visibles (BUG-048) : l'ombre/anneau
-    -- custom ne fait que les compléter, il ne les remplace plus.
-    self.cooldownSkinButtons = self.cooldownSkinButtons or {}
-    self.cooldownSkinButtons[btn] = true
-    self:EnsureCooldownSkinTicker()
-    if self.cooldownSkinTicker then self.cooldownSkinTicker:Show() end
-    self:UpdateCooldownSkin(btn)
+-- BUG-049 : NO-OP. L'animation de cooldown custom (ticker 0.03s + arc + ombre
+-- + rotation) est supprimée pour les FPS. Le cooldown natif (BUG-048) suffit.
+-- On s'assure juste qu'aucun bouton ne reste dans le ticker.
+function M:RegisterCooldownSkin(btn)
+    if btn then self:ClearCooldownSkin(btn) end
+    if self.cooldownSkinTicker then self.cooldownSkinTicker:Hide() end
 end
 
 function M:CreateButton(bar, barIndex, buttonIndex)

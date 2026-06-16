@@ -161,7 +161,7 @@ function M:EnsureDefaults()
         primaryPairYOffset = 0,
         pageFlash = true,        -- indicateur éphémère "Barre N" au changement de page
         pageFlashDuration = 1.4, -- secondes avant le fondu
-        ownBindings = false,     -- (désactivé : casse le cast par raccourci en 12.x — on garde les raccourcis natifs Blizzard)
+        ownBindings = true,      -- router les raccourcis des barres 2-8 vers nos boutons secure (clavier suit la pagination)
         castOnDown = true,       -- déclencher au press (réactivité max, anti-latence) via la CVar Blizzard
     })
     if root.replaceBlizzard == nil then root.replaceBlizzard = true end
@@ -214,12 +214,19 @@ function M:EnsureDefaults()
         end
         root.pagingFieldVersion = 1
     end
-    -- Réinitialisation de sécurité : la possession des raccourcis (ownBindings)
-    -- cassait le cast de la barre principale en 12.x. On la force OFF une fois
-    -- pour réparer les profils impactés ; les raccourcis natifs reprennent.
     if root.ownBindingsResetV1 ~= 1 then
         root.ownBindings = false
         root.ownBindingsResetV1 = 1
+    end
+    -- V2 : la possession des raccourcis est RÉACTIVÉE pour les barres 2-8
+    -- (jamais la barre 1, exclusion dure dans ApplyBarBindings). Indispensable
+    -- pour que le CLAVIER suive la barre affichée lors de la pagination liée :
+    -- les touches d'une barre sont routées vers ses boutons secure, dont
+    -- l'attribut action est paginé. La régression d'origine était spécifique
+    -- à la famille ACTIONBUTTON (barre 1, partagée avec la barre véhicule).
+    if root.ownBindingsResetV2 ~= 1 then
+        root.ownBindings = true
+        root.ownBindingsResetV2 = 1
     end
     return root
 end
@@ -1308,6 +1315,21 @@ function M:EnsureBar(index)
     bar:SetClampedToScreen(true)
     bar._isSPFrame = true
     bar.buttons = {}
+
+    -- Label éphémère du numéro de barre AFFICHÉ à cet emplacement (au switch).
+    bar.pageLabel = bar:CreateFontString(nil, "OVERLAY")
+    bar.pageLabel:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    bar.pageLabel:SetTextColor(1.0, 0.84, 0.32, 1)
+    bar.pageLabel:SetShadowColor(0, 0, 0, 1)
+    bar.pageLabel:SetShadowOffset(1, -1)
+    bar.pageLabel:SetPoint("BOTTOM", bar, "TOP", 0, 10)
+    bar.pageLabel:Hide()
+    bar.pageLabelAnim = bar.pageLabel:CreateAnimationGroup()
+    local plHold = bar.pageLabelAnim:CreateAnimation("Alpha")
+    plHold:SetFromAlpha(1); plHold:SetToAlpha(1); plHold:SetDuration(1.1); plHold:SetOrder(1)
+    local plFade = bar.pageLabelAnim:CreateAnimation("Alpha")
+    plFade:SetFromAlpha(1); plFade:SetToAlpha(0); plFade:SetDuration(0.5); plFade:SetOrder(2); plFade:SetSmoothing("OUT")
+    bar.pageLabelAnim:SetScript("OnFinished", function() bar.pageLabel:Hide() end)
     bar:RegisterForDrag("LeftButton")
     bar:SetScript("OnDragStart", function(f)
         if InCombat() or not IsEditMode() then return end
@@ -2616,29 +2638,43 @@ end
 
 -- Détecte un changement de page de la barre principale et flashe le nom.
 -- silent=true : pose la référence sans flasher (init/reload).
+-- Flash éphémère du numéro de barre AU-DESSUS de chaque emplacement de barre.
+function M:FlashBarLabel(bar, text)
+    if not (bar and bar.pageLabel) then return end
+    if self:EnsureDefaults().pageFlash == false then return end
+    bar.pageLabel:SetText(text)
+    bar.pageLabel:SetAlpha(1)
+    bar.pageLabel:Show()
+    if bar.pageLabelAnim then
+        pcall(bar.pageLabelAnim.Stop, bar.pageLabelAnim)
+        pcall(bar.pageLabelAnim.Play, bar.pageLabelAnim)
+    end
+end
+
+-- Au changement de page, affiche le numéro de barre réellement présent SUR
+-- CHAQUE emplacement (cohérent avec la config), au lieu d'un titre central
+-- qui défilait de 1 à 6 sans rapport avec ce qu'on voit.
 function M:CheckPageChange(silent)
-    -- Flash si l'addon est actif et qu'au moins une barre activée pagine.
-    local paginates = false
-    if self:IsEnabled() then
-        local root = self:EnsureDefaults()
-        for i = 1, NUM_BARS do
-            local c = root.bars[i]
-            if c and c.enabled == true and BarPagingMode(c, i) ~= "none" then
-                paginates = true
-                break
+    if not (self:IsEnabled() and self.bars) then return end
+    local root = self:EnsureDefaults()
+    for i = 1, NUM_BARS do
+        local bar = self.bars[i]
+        local cfg = root.bars[i]
+        if bar and cfg and cfg.enabled == true and BarPagingMode(cfg, i) ~= "none" then
+            local page = ResolveBarDisplayPage(cfg, i)
+            if page ~= bar._lastDisplayedPage then
+                local prev = bar._lastDisplayedPage
+                bar._lastDisplayedPage = page
+                if not silent and prev ~= nil then
+                    local label
+                    if BarPagingMode(cfg, i) == "native" and page and page >= 7 then
+                        label = CurrentFormName() or ("Posture " .. (page - 6))
+                    else
+                        label = "Barre " .. tostring(page or i)
+                    end
+                    self:FlashBarLabel(bar, label)
+                end
             end
-        end
-    end
-    if not paginates then
-        self._lastShownPage = nil
-        return
-    end
-    local page = ResolveMainBarPage()
-    local prev = self._lastShownPage
-    if prev ~= page then
-        self._lastShownPage = page
-        if not silent and prev ~= nil then
-            self:FlashPage(self:PageLabel(page))
         end
     end
 end
